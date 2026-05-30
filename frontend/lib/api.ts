@@ -1,0 +1,441 @@
+// Minimal typed API client. Calls hit the Django backend directly; CORS is
+// configured server-side for the frontend origin. Override the host with
+// NEXT_PUBLIC_API_BASE when deploying behind a different domain.
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+
+const ACCESS_KEY = 'attorney.access';
+const REFRESH_KEY = 'attorney.refresh';
+
+export function getAccess(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(ACCESS_KEY);
+}
+export function getRefresh(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(REFRESH_KEY);
+}
+export function setTokens(access: string, refresh: string) {
+  window.localStorage.setItem(ACCESS_KEY, access);
+  window.localStorage.setItem(REFRESH_KEY, refresh);
+}
+export function clearTokens() {
+  window.localStorage.removeItem(ACCESS_KEY);
+  window.localStorage.removeItem(REFRESH_KEY);
+}
+export function isAuthed(): boolean {
+  return !!getAccess();
+}
+
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown, message: string) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function describe(body: unknown): string {
+  if (!body || typeof body !== 'object') return 'Request failed';
+  const obj = body as Record<string, unknown>;
+  if (typeof obj.detail === 'string') return obj.detail;
+  // Surface the first field error (e.g. {"amount": ["Must be > 0"]}).
+  const first = Object.entries(obj)[0];
+  if (first) {
+    const [field, val] = first;
+    const msg = Array.isArray(val) ? val[0] : val;
+    return `${field}: ${msg}`;
+  }
+  return 'Request failed';
+}
+
+export async function api<T = unknown>(
+  path: string,
+  options: RequestInit = {},
+  { auth = true }: { auth?: boolean } = {}
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  const isForm = options.body instanceof FormData;
+  if (!isForm && options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (auth) {
+    const token = getAccess();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  if (res.status === 204 || res.status === 205) return undefined as T;
+
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+
+  if (!res.ok) {
+    throw new ApiError(res.status, body, describe(body));
+  }
+  return body as T;
+}
+
+// ---- Domain types ----
+export interface User {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  is_verified: boolean;
+}
+export interface MiniUser {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  role: string;
+}
+export interface Matter {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  practice_area: string;
+  jurisdiction: string;
+  billing_model: string;
+  created_at: string;
+  channel_id: number | null;
+  client?: MiniUser;
+  lawyers?: MiniUser[];
+  on_retainer?: boolean;
+  consultation_id?: number | null;
+  consultation?: Consultation | null;
+  payment_id?: number | null;
+}
+export interface LawyerProfile {
+  bar_number: string;
+  jurisdictions: string[];
+  practice_areas: string[];
+  languages: string[];
+  years_experience: number;
+  hourly_rate: string | null;
+  consultation_price: string | null;
+  bio: string;
+}
+export interface Lawyer {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  is_verified: boolean;
+  profile: LawyerProfile | null;
+  on_retainer: boolean;
+  hourly_rate: string | null;
+  avg_rating: number | null;
+  review_count: number;
+}
+export interface Consultation {
+  id: number;
+  matter: number;
+  matter_title: string;
+  lawyer_detail: MiniUser | null;
+  client_detail: MiniUser | null;
+  scheduled_time: string;
+  duration_minutes: number;
+  mode: string;
+  mode_display: string;
+  payment_method: string;
+  practice_areas: string[];
+  status: string;
+  status_display: string;
+  price: string | null;
+  rate_snapshot: string | null;
+  notes: string;
+  confirmed_at: string | null;
+  channel_id: number | null;
+}
+export interface Review {
+  id: number;
+  matter: number;
+  rating: number;
+  body: string;
+  author_detail: MiniUser;
+  created_at: string;
+}
+export interface TimeEntry {
+  id: number;
+  matter: number;
+  matter_title: string;
+  client_detail: MiniUser | null;
+  lawyer_detail: MiniUser | null;
+  description: string;
+  started_at: string;
+  ended_at: string | null;
+  minutes: number;
+  amount: string | null;
+  rate_snapshot: string | null;
+  is_billable: boolean;
+  is_running: boolean;
+}
+export interface Transaction {
+  id: string;
+  kind: 'payment' | 'trust';
+  matter: number;
+  matter_title: string;
+  label: string;
+  amount: string;
+  currency: string;
+  status: string;
+  status_display: string;
+  created_at: string;
+}
+export interface LawyerProfileEdit {
+  bar_number: string;
+  jurisdictions: string[];
+  practice_areas: string[];
+  languages: string[];
+  years_experience: number;
+  hourly_rate: string | null;
+  consultation_price: string | null;
+  bio: string;
+}
+export interface Retainer {
+  id: number;
+  lawyer_detail: MiniUser;
+  client_detail: MiniUser;
+  plan_name: string;
+  cycle: string;
+  monthly_fee: string | null;
+  included_hours: number;
+  status: string;
+  created_at: string;
+}
+export interface Message {
+  id: number;
+  channel: number;
+  sender: MiniUser;
+  content: string;
+  created_at: string;
+}
+export interface DocumentItem {
+  id: number;
+  matter: number;
+  uploader_detail: MiniUser | null;
+  title: string;
+  kind: 'document' | 'draft';
+  file_url: string | null;
+  body: string;
+  version: number;
+  created_at: string;
+}
+export interface Payment {
+  id: number;
+  matter: number;
+  amount: string;
+  currency: string;
+  provider: string;
+  purpose: string;
+  reference: string;
+  status: string;
+  status_display: string;
+  proof_of_payment_url: string | null;
+  created_at: string;
+}
+export interface Paginated<T> {
+  count: number;
+  results: T[];
+}
+
+// ---- Endpoints ----
+export const auth = {
+  async register(payload: {
+    email: string;
+    password: string;
+    first_name: string;
+    last_name: string;
+    role: string;
+  }) {
+    return api('/api/v1/register/', { method: 'POST', body: JSON.stringify(payload) }, { auth: false });
+  },
+  async login(email: string, password: string) {
+    const tok = await api<{ access: string; refresh: string }>(
+      '/api/v1/auth/token/',
+      { method: 'POST', body: JSON.stringify({ email, password }) },
+      { auth: false }
+    );
+    setTokens(tok.access, tok.refresh);
+    return tok;
+  },
+  async logout() {
+    const refresh = getRefresh();
+    try {
+      if (refresh) await api('/api/v1/auth/logout/', { method: 'POST', body: JSON.stringify({ refresh }) });
+    } finally {
+      clearTokens();
+    }
+  },
+  me() {
+    return api<User>('/api/v1/users/me/');
+  },
+};
+
+export const matters = {
+  list() {
+    return api<Paginated<Matter>>('/api/v1/matters/');
+  },
+  get(id: number) {
+    return api<Matter>(`/api/v1/matters/${id}/`);
+  },
+  create(payload: {
+    title: string;
+    lawyer: number;
+    description?: string;
+    practice_areas?: string[];
+    jurisdiction?: string;
+    scheduled_time?: string | null;
+    duration_minutes?: number;
+    consult_method?: string;
+    payment_method?: string;
+  }) {
+    return api<Matter>('/api/v1/matters/', { method: 'POST', body: JSON.stringify(payload) });
+  },
+};
+
+export const consultations = {
+  list() {
+    return api<Paginated<Consultation>>('/api/v1/consultations/');
+  },
+  get(id: number) {
+    return api<Consultation>(`/api/v1/consultations/${id}/`);
+  },
+  confirm(id: number) {
+    return api<Consultation>(`/api/v1/consultations/${id}/confirm/`, { method: 'POST' });
+  },
+  cancel(id: number) {
+    return api<Consultation>(`/api/v1/consultations/${id}/cancel/`, { method: 'POST' });
+  },
+  complete(id: number) {
+    return api<Consultation>(`/api/v1/consultations/${id}/complete/`, { method: 'POST' });
+  },
+};
+
+export const reviews = {
+  forLawyer(lawyerId: number) {
+    return api<Paginated<Review>>(`/api/v1/reviews/?lawyer=${lawyerId}`);
+  },
+  forMatter(matterId: number) {
+    return api<Paginated<Review>>(`/api/v1/reviews/?matter=${matterId}`);
+  },
+  create(matterId: number, rating: number, body: string) {
+    return api<Review>('/api/v1/reviews/', {
+      method: 'POST',
+      body: JSON.stringify({ matter: matterId, rating, body }),
+    });
+  },
+};
+
+export const timeEntries = {
+  forMatter(matterId: number) {
+    return api<Paginated<TimeEntry>>(`/api/v1/time-entries/?matter=${matterId}`);
+  },
+  all() {
+    return api<Paginated<TimeEntry>>('/api/v1/time-entries/');
+  },
+  running() {
+    return api<TimeEntry | null>('/api/v1/time-entries/running/');
+  },
+  start(matterId: number, description = '') {
+    return api<TimeEntry>('/api/v1/time-entries/start/', {
+      method: 'POST',
+      body: JSON.stringify({ matter: matterId, description }),
+    });
+  },
+  stop(id: number) {
+    return api<TimeEntry>(`/api/v1/time-entries/${id}/stop/`, { method: 'POST' });
+  },
+};
+
+export const transactions = {
+  list() {
+    return api<{ count: number; total_escrow: string; results: Transaction[] }>('/api/v1/transactions/');
+  },
+};
+
+export const lawyerProfile = {
+  get() {
+    return api<LawyerProfileEdit>('/api/v1/me/lawyer-profile/');
+  },
+  update(payload: Partial<LawyerProfileEdit>) {
+    return api<LawyerProfileEdit>('/api/v1/me/lawyer-profile/', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+export const lawyers = {
+  list(search = '') {
+    const q = search ? `?search=${encodeURIComponent(search)}` : '';
+    return api<Paginated<Lawyer>>(`/api/v1/lawyers/${q}`);
+  },
+  get(id: number) {
+    return api<Lawyer>(`/api/v1/lawyers/${id}/`);
+  },
+};
+
+export const retainers = {
+  list() {
+    return api<Paginated<Retainer>>('/api/v1/retainers/');
+  },
+};
+
+export const messages = {
+  listForChannel(channelId: number) {
+    return api<Paginated<Message>>(`/api/v1/messages/?channel=${channelId}`);
+  },
+  send(channelId: number, content: string) {
+    return api<Message>('/api/v1/messages/', {
+      method: 'POST',
+      body: JSON.stringify({ channel: channelId, content }),
+    });
+  },
+};
+
+export const documents = {
+  listForMatter(matterId: number, kind?: 'document' | 'draft') {
+    const k = kind ? `&kind=${kind}` : '';
+    return api<Paginated<DocumentItem>>(`/api/v1/documents/?matter=${matterId}${k}`);
+  },
+  createDraft(matterId: number, title: string, body: string) {
+    return api<DocumentItem>('/api/v1/documents/', {
+      method: 'POST',
+      body: JSON.stringify({ matter: matterId, title, kind: 'draft', body }),
+    });
+  },
+  upload(matterId: number, file: File, title: string) {
+    const form = new FormData();
+    form.append('matter', String(matterId));
+    form.append('title', title);
+    form.append('kind', 'document');
+    form.append('file', file);
+    return api<DocumentItem>('/api/v1/documents/', { method: 'POST', body: form });
+  },
+};
+
+export const payments = {
+  listForMatter(matterId: number) {
+    return api<Paginated<Payment>>(`/api/v1/payments/?matter=${matterId}`);
+  },
+  create(payload: { matter: number; amount: string; currency: string; provider: string; purpose: string }) {
+    return api<Payment>('/api/v1/payments/', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  uploadProof(paymentId: number, file: File, reference: string, note: string) {
+    const form = new FormData();
+    form.append('proof_of_payment', file);
+    if (reference) form.append('reference', reference);
+    if (note) form.append('note', note);
+    return api<Payment>(`/api/v1/payments/${paymentId}/upload-proof/`, { method: 'POST', body: form });
+  },
+};

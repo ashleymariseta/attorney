@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background-color: #ffffff;
+  color: #0d1716;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+      transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-dark text-white hover:bg-brand;
+  }
+  .btn-light {
+    @apply btn bg-brand-light/15 text-brand hover:bg-brand-light/25;
+  }
+  .btn-outline {
+    @apply btn border border-line bg-surface text-ink hover:border-brand hover:text-brand;
+  }
+  .btn-ghost {
+    @apply btn text-ink hover:bg-line/60;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
+      outline-none placeholder:text-muted focus:border-brand focus:ring-2 focus:ring-brand-light/40;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+  .card {
+    @apply rounded-xl border border-line bg-surface p-5 shadow-card;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+  .badge-teal {
+    @apply badge bg-brand-light/20 text-brand;
+  }
+  .badge-muted {
+    @apply badge bg-line text-muted;
+  }
+
+  /* Slack-style sidebar links (light theme) */
+  .side-link {
+    @apply flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-ink/70
+      transition-colors hover:bg-brand-light/10 hover:text-brand-dark;
+  }
+  .side-link-active {
+    @apply bg-brand-light/15 text-brand-dark;
+  }
+}
+
+/* thin scrollbars to match the app chrome */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cdd8d6 transparent;
+}
+
+/* horizontal marquee — duplicate children for seamless loop */
+@keyframes marquee-x {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee-x 40s linear infinite;
+  will-change: transform;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
