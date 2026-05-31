@@ -4,6 +4,7 @@ import Image from 'next/image';
 import {
   BadgeCheck,
   Briefcase,
+  Building2,
   ChevronDown,
   GraduationCap,
   MapPin,
@@ -13,7 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { lawyers as lawyersApi, type Lawyer } from '@/lib/api';
+import { firms as firmsApi, lawyers as lawyersApi, type FirmCard, type Lawyer } from '@/lib/api';
 import BookModal from '@/components/BookModal';
 import { StarRating } from '@/components/Stars';
 import { DecoIcon } from '@/components/Banner';
@@ -31,8 +32,10 @@ const YEARS = [
 
 export default function LawyersPage() {
   const [list, setList] = useState<Lawyer[]>([]);
+  const [firmList, setFirmList] = useState<FirmCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Lawyer | null>(null);
+  const [tab, setTab] = useState<'lawyers' | 'firms'>('lawyers');
 
   // filters
   const [q, setQ] = useState('');
@@ -41,11 +44,15 @@ export default function LawyersPage() {
   const [locations, setLocations] = useState<string[]>([]);
   const [minYears, setMinYears] = useState(0);
   const [retainerOnly, setRetainerOnly] = useState(false);
+  const [firmFilter, setFirmFilter] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
-      const res = await lawyersApi.list();
-      setList(res.results);
+      try {
+        const [lr, fr] = await Promise.all([lawyersApi.list(), firmsApi.list()]);
+        setList(lr.results);
+        setFirmList(fr.results);
+      } catch {}
       setLoading(false);
     })();
   }, []);
@@ -72,6 +79,11 @@ export default function LawyersPage() {
     setRetainerOnly(false);
   }
 
+  const firmName = useMemo(() => {
+    if (firmFilter == null) return null;
+    return firmList.find((f) => f.id === firmFilter)?.name ?? null;
+  }, [firmFilter, firmList]);
+
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return list.filter((l) => {
@@ -80,18 +92,53 @@ export default function LawyersPage() {
       if (minYears && (l.profile?.years_experience ?? 0) < minYears) return false;
       if (areas.length && !(l.profile?.practice_areas ?? []).some((a) => areas.includes(a))) return false;
       if (locations.length && !(l.profile?.jurisdictions ?? []).some((j) => locations.includes(j))) return false;
+      if (firmFilter != null && (l.profile as any)?.firm !== firmFilter) return false;
       return true;
     });
-  }, [q, list, areas, locations, minYears, retainerOnly]);
+  }, [q, list, areas, locations, minYears, retainerOnly, firmFilter]);
+
+  const filteredFirms = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return firmList.filter((f) => {
+      if (term && !f.name.toLowerCase().includes(term)) return false;
+      if (areas.length && !(f.practice_areas ?? []).some((a) => areas.includes(a))) return false;
+      if (locations.length && !(f.jurisdictions ?? []).some((j) => locations.includes(j))) return false;
+      return true;
+    });
+  }, [q, firmList, areas, locations]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Find a Lawyer</h1>
         <p className="text-sm text-muted">
-          Choose a verified practitioner. Engagements start with a consultation — unless they&rsquo;re on your legal team.
+          Choose a verified practitioner or firm. Engagements start with a consultation — unless they&rsquo;re on your legal team.
         </p>
       </div>
+
+      <div className="mb-5 flex items-center gap-1 border-b border-line">
+        <TabBtn active={tab === 'lawyers'} onClick={() => setTab('lawyers')}>
+          <GraduationCap size={14} /> Lawyers
+          <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            tab === 'lawyers' ? 'bg-brand-dark text-white' : 'bg-line text-muted'
+          }`}>{filtered.length}</span>
+        </TabBtn>
+        <TabBtn active={tab === 'firms'} onClick={() => { setTab('firms'); setFirmFilter(null); }}>
+          <Building2 size={14} /> Firms
+          <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            tab === 'firms' ? 'bg-brand-dark text-white' : 'bg-line text-muted'
+          }`}>{filteredFirms.length}</span>
+        </TabBtn>
+      </div>
+
+      {firmFilter != null && tab === 'lawyers' && (
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-brand-light/15 px-3 py-1 text-xs font-semibold text-brand-dark">
+          <Building2 size={12} /> {firmName}
+          <button onClick={() => setFirmFilter(null)} className="rounded-full p-0.5 hover:bg-white/40" aria-label="Clear firm filter">
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {/* search + filter toggle */}
       <div className="flex items-center gap-2">
@@ -155,11 +202,71 @@ export default function LawyersPage() {
         </div>
       </div>
 
-      <p className="mb-4 mt-5 text-xs text-muted">{filtered.length} lawyer{filtered.length === 1 ? '' : 's'}</p>
+      <p className="mb-4 mt-5 text-xs text-muted">
+        {tab === 'lawyers'
+          ? `${filtered.length} lawyer${filtered.length === 1 ? '' : 's'}`
+          : `${filteredFirms.length} firm${filteredFirms.length === 1 ? '' : 's'}`}
+      </p>
 
-      {loading ? (
+      {tab === 'firms' && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {loading && <p className="text-sm text-muted">Loading firms…</p>}
+          {filteredFirms.map((f) => (
+            <div key={f.id} className="card relative flex flex-col overflow-hidden">
+              <DecoIcon icon={Building2} />
+              <div className="relative z-10 flex items-center gap-3">
+                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand-dark text-white">
+                  <Building2 size={24} />
+                </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="truncate font-semibold">{f.name}</h3>
+                    {f.verified && <BadgeCheck size={15} className="shrink-0 text-brand" />}
+                  </div>
+                  <p className="text-xs text-muted">
+                    {f.lawyer_count} lawyer{f.lawyer_count === 1 ? '' : 's'} ·{' '}
+                    {(f.jurisdictions ?? []).join(', ') || '—'}
+                  </p>
+                </div>
+              </div>
+              <div className="relative z-10 mt-3 flex flex-wrap gap-1.5">
+                {(f.practice_areas ?? []).slice(0, 4).map((a) => (
+                  <span key={a} className="badge-muted">{a}</span>
+                ))}
+              </div>
+              <div className="relative z-10 mt-4 flex items-center justify-between border-t border-line pt-3">
+                <p className="text-sm">
+                  {f.starting_rate ? (
+                    <>
+                      <span className="text-xs text-muted">from </span>
+                      <span className="font-semibold">${f.starting_rate}</span>
+                      <span className="text-xs text-muted"> / hour</span>
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted">Contact for rates</span>
+                  )}
+                </p>
+                <button
+                  onClick={() => {
+                    setFirmFilter(f.id);
+                    setTab('lawyers');
+                  }}
+                  className="btn-light"
+                >
+                  View lawyers
+                </button>
+              </div>
+            </div>
+          ))}
+          {!loading && filteredFirms.length === 0 && (
+            <p className="text-sm text-muted">No firms match your filters.</p>
+          )}
+        </div>
+      )}
+
+      {tab === 'lawyers' && loading ? (
         <p className="text-sm text-muted">Loading lawyers…</p>
-      ) : (
+      ) : tab === 'lawyers' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((l) => (
             <div key={l.id} className="card relative flex flex-col overflow-hidden">
@@ -213,10 +320,31 @@ export default function LawyersPage() {
             <p className="text-sm text-muted">No lawyers match your filters.</p>
           )}
         </div>
-      )}
+      ) : null}
 
       {selected && <BookModal lawyer={selected} onClose={() => setSelected(null)} />}
     </div>
+  );
+}
+
+function TabBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+        active ? 'border-brand-dark text-brand-dark' : 'border-transparent text-muted hover:text-ink'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

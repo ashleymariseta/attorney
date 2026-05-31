@@ -1,33 +1,199 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { lawyerProfile, ApiError, type LawyerProfileEdit } from '@/lib/api';
+import { useEffect, useRef, useState } from 'react';
+import {
+  BadgeCheck,
+  Banknote,
+  Building2,
+  Camera,
+  CreditCard,
+  Landmark,
+  Pencil,
+  Plus,
+  Smartphone,
+  Trash2,
+  User as UserIcon,
+  Wallet,
+  WalletCards,
+  WalletMinimal,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
+import {
+  firms as firmsApi,
+  lawyerProfile,
+  paymentAccounts as accountsApi,
+  userMe,
+  ApiError,
+  type FirmCard,
+  type LawyerProfileEdit,
+  type PaymentAccount,
+} from '@/lib/api';
 import { useApp } from '@/components/AppShell';
+import { useToast } from '@/components/Toast';
+
+const ACCOUNT_TYPES: Array<{ value: PaymentAccount['account_type']; label: string; icon: LucideIcon }> = [
+  { value: 'ecocash', label: 'EcoCash', icon: Smartphone },
+  { value: 'onemoney', label: 'OneMoney', icon: Wallet },
+  { value: 'bank', label: 'Bank', icon: Landmark },
+  { value: 'innbucks', label: 'InnBucks', icon: WalletCards },
+  { value: 'omari', label: "O'mari", icon: WalletMinimal },
+  { value: 'cash', label: 'Cash', icon: Banknote },
+];
+
+function iconForType(t: string): LucideIcon {
+  return ACCOUNT_TYPES.find((a) => a.value === t)?.icon ?? CreditCard;
+}
 
 export default function SettingsPage() {
+  const toast = useToast();
   const { me } = useApp();
   const isLawyer = me?.role === 'lawyer';
+
   const [form, setForm] = useState<LawyerProfileEdit | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(me?.avatar_url ?? null);
+  const avatarRef = useRef<HTMLInputElement>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+
+  const [allFirms, setAllFirms] = useState<FirmCard[]>([]);
+  const [firmBusy, setFirmBusy] = useState(false);
+  const [firmEdit, setFirmEdit] = useState<Partial<FirmCard> | null>(null);
+  const [firmDetail, setFirmDetail] = useState<FirmCard | null>(null);
+
+  const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
+  const [acctModal, setAcctModal] = useState<{ mode: 'create' | 'edit'; record?: PaymentAccount } | null>(null);
 
   useEffect(() => {
     if (!isLawyer) return;
     lawyerProfile.get().then(setForm).catch(() => setError('Could not load profile.'));
+    firmsApi.list().then((r) => setAllFirms(r.results)).catch(() => {});
+    accountsApi.mine().then((r) => setAccounts(r.results)).catch(() => {});
   }, [isLawyer]);
 
+  useEffect(() => {
+    if (form?.firm) {
+      firmsApi.get(form.firm).then(setFirmDetail).catch(() => setFirmDetail(null));
+    } else {
+      setFirmDetail(null);
+    }
+  }, [form?.firm]);
+
+  useEffect(() => setAvatarUrl(me?.avatar_url ?? null), [me?.avatar_url]);
+
+  async function onAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarBusy(true);
+    try {
+      const updated = await userMe.uploadAvatar(file);
+      setAvatarUrl(updated.avatar_url ?? null);
+      toast.success('Profile picture updated.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Upload failed.');
+    } finally {
+      setAvatarBusy(false);
+      if (avatarRef.current) avatarRef.current.value = '';
+    }
+  }
+
+  async function removeAvatar() {
+    const ok = await toast.confirm({ title: 'Remove profile picture?', confirmLabel: 'Remove', tone: 'danger' });
+    if (!ok) return;
+    setAvatarBusy(true);
+    try {
+      const updated = await userMe.removeAvatar();
+      setAvatarUrl(updated.avatar_url ?? null);
+      toast.success('Profile picture removed.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not remove.');
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function joinFirm(firmId: number) {
+    setFirmBusy(true);
+    try {
+      const firm = await firmsApi.join(firmId);
+      const updated = await lawyerProfile.get();
+      setForm(updated);
+      toast.success(`You're now part of ${firm.name}.`, { title: 'Firm joined', major: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not join firm.');
+    } finally {
+      setFirmBusy(false);
+    }
+  }
+
+  async function leaveFirm() {
+    const ok = await toast.confirm({
+      title: 'Leave this firm?',
+      body: 'You and the rest of the firm will lose shared oversight on matters.',
+      confirmLabel: 'Leave firm',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setFirmBusy(true);
+    try {
+      await firmsApi.leave();
+      const updated = await lawyerProfile.get();
+      setForm(updated);
+      toast.success('You left the firm.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not leave firm.');
+    } finally {
+      setFirmBusy(false);
+    }
+  }
+
+  async function saveFirm() {
+    if (!firmEdit || !firmDetail) return;
+    try {
+      const updated = await firmsApi.update(firmDetail.id, firmEdit);
+      setFirmDetail(updated);
+      setFirmEdit(null);
+      toast.success('Firm details updated.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not save firm.');
+    }
+  }
+
+  async function deleteAccount(a: PaymentAccount) {
+    const ok = await toast.confirm({
+      title: `Remove ${a.account_type_display} account?`,
+      body: 'Clients will no longer see this account when paying you.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await accountsApi.remove(a.id);
+      setAccounts((cur) => cur.filter((x) => x.id !== a.id));
+      toast.success('Payment account removed.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not remove.');
+    }
+  }
+
   if (!isLawyer) {
-    return <div className="mx-auto max-w-2xl px-4 py-8"><p className="text-sm text-muted">Settings are available for lawyer accounts.</p></div>;
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <p className="text-sm text-muted">Settings are available for lawyer accounts.</p>
+      </div>
+    );
   }
   if (!form) return <p className="p-8 text-sm text-muted">Loading…</p>;
 
   function set<K extends keyof LawyerProfileEdit>(k: K, v: LawyerProfileEdit[K]) {
     setForm((f) => (f ? { ...f, [k]: v } : f));
-    setSaved(false);
+    setSavedAt(null);
   }
 
-  async function save(e: React.FormEvent) {
+  async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
     setBusy(true);
@@ -44,9 +210,11 @@ export default function SettingsPage() {
         bar_number: form.bar_number,
       });
       setForm(updated);
-      setSaved(true);
+      setSavedAt(Date.now());
+      toast.success('Profile saved.');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
     } finally {
       setBusy(false);
     }
@@ -54,32 +222,56 @@ export default function SettingsPage() {
 
   const list = (arr: string[]) => arr.join(', ');
   const parse = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
+  const isFirmAdmin = !!firmDetail && me && firmDetail.admin === me.id;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-bold">Settings & Rate</h1>
-      <p className="text-sm text-muted">This is what clients see on your directory card.</p>
+      <h1 className="text-2xl font-bold">Settings</h1>
+      <p className="text-sm text-muted">Profile, rates, firm, and where clients pay you.</p>
 
-      <form onSubmit={save} className="mt-6 space-y-5">
+      {/* PROFILE */}
+      <form onSubmit={saveProfile} className="mt-6 space-y-5">
         <div className="card space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Your rate</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Hourly rate (USD)</label>
-              <input className="field" type="number" min="0" step="1" value={form.hourly_rate ?? ''}
-                onChange={(e) => set('hourly_rate', e.target.value)} />
-              <p className="mt-1 text-xs text-muted">Bookings are priced as rate × minutes.</p>
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+            <UserIcon size={14} /> Profile
+          </h2>
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full border border-line bg-canvas text-2xl font-bold text-brand-dark">
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span>{(me?.first_name?.[0] ?? '?') + (me?.last_name?.[0] ?? '')}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => avatarRef.current?.click()}
+                disabled={avatarBusy}
+                aria-label="Change profile picture"
+                className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full border border-line bg-white text-brand-dark shadow-card hover:border-brand hover:text-brand"
+              >
+                <Camera size={14} />
+              </button>
+              <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={onAvatarPick} />
             </div>
-            <div>
-              <label className="label">Consultation base (USD)</label>
-              <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
-                onChange={(e) => set('consultation_price', e.target.value)} />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-ink">{me?.first_name} {me?.last_name}</p>
+              <p className="truncate text-xs text-muted">{me?.email}</p>
+              {avatarUrl && (
+                <button
+                  type="button"
+                  onClick={removeAvatar}
+                  disabled={avatarBusy}
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-muted hover:text-red-600"
+                >
+                  <Trash2 size={11} /> Remove picture
+                </button>
+              )}
             </div>
           </div>
-        </div>
 
-        <div className="card space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Profile</h2>
           <div>
             <label className="label">Practice areas (comma separated)</label>
             <input className="field" value={list(form.practice_areas)} onChange={(e) => set('practice_areas', parse(e.target.value))} />
@@ -111,12 +303,386 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* RATES */}
+        <div className="card space-y-4">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Your rate</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Hourly rate (USD)</label>
+              <input className="field" type="number" min="0" step="1" value={form.hourly_rate ?? ''}
+                onChange={(e) => set('hourly_rate', e.target.value)} />
+              <p className="mt-1 text-xs text-muted">Bookings are priced as rate × minutes.</p>
+            </div>
+            <div>
+              <label className="label">Consultation base (USD)</label>
+              <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
+                onChange={(e) => set('consultation_price', e.target.value)} />
+            </div>
+          </div>
+        </div>
+
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         <div className="flex items-center gap-3">
           <button className="btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
-          {saved && <span className="text-sm text-brand">✓ Saved</span>}
+          {savedAt && <span className="text-sm text-brand">✓ Saved</span>}
         </div>
       </form>
+
+      {/* PAYMENT ACCOUNTS */}
+      <div className="mt-8 card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+            <Wallet size={14} /> Payment accounts
+          </h2>
+          <button
+            onClick={() => setAcctModal({ mode: 'create' })}
+            className="inline-flex items-center gap-1 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand"
+          >
+            <Plus size={12} /> Add account
+          </button>
+        </div>
+        <p className="text-xs text-muted">
+          Clients see these accounts when they pay you. Add an entry for every method you accept.
+        </p>
+        {accounts.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-line bg-canvas/40 px-4 py-6 text-center text-xs text-muted">
+            No payment accounts yet. Add one so clients know where to send funds.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((a) => {
+              const Icon = iconForType(a.account_type);
+              return (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white p-3"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-light/15 text-brand-dark">
+                      <Icon size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-ink">
+                        {a.account_type_display}
+                        {a.account_name && <span className="ml-1 text-muted">· {a.account_name}</span>}
+                      </p>
+                      <p className="truncate text-xs text-muted">
+                        {a.identifier}
+                        {a.bank_name && ` · ${a.bank_name}`}
+                        {a.branch && ` · ${a.branch}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setAcctModal({ mode: 'edit', record: a })}
+                      className="rounded-md p-1.5 text-muted hover:bg-canvas hover:text-ink"
+                      aria-label="Edit"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      onClick={() => deleteAccount(a)}
+                      className="rounded-md p-1.5 text-muted hover:bg-red-50 hover:text-red-600"
+                      aria-label="Remove"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* LAW FIRM */}
+      <div className="mt-8 card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+            <Building2 size={14} /> Law firm
+          </h2>
+          {firmDetail && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/15 px-2.5 py-0.5 text-[11px] font-semibold text-brand-dark">
+              <BadgeCheck size={12} /> {isFirmAdmin ? 'Admin' : 'Member'}
+            </span>
+          )}
+        </div>
+
+        {firmDetail ? (
+          <div>
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-full bg-brand-dark text-white">
+                <Building2 size={18} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-ink">{firmDetail.name}</p>
+                {firmDetail.website && (
+                  <a href={firmDetail.website} target="_blank" rel="noreferrer" className="text-xs text-brand hover:underline">
+                    {firmDetail.website}
+                  </a>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-muted">
+              You and other firm lawyers can see all matters assigned to any member of{' '}
+              <span className="font-semibold text-ink">{firmDetail.name}</span>.
+            </p>
+
+            {isFirmAdmin && (
+              <div className="mt-4 rounded-lg border border-line bg-canvas/40 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Manage firm</p>
+                  {!firmEdit && (
+                    <button
+                      onClick={() =>
+                        setFirmEdit({
+                          name: firmDetail.name,
+                          website: firmDetail.website,
+                          description: firmDetail.description ?? '',
+                          default_hourly_rate: firmDetail.default_hourly_rate ?? null,
+                          default_consultation_price: firmDetail.default_consultation_price ?? null,
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2 py-1 text-[11px] font-semibold text-brand-dark hover:border-brand"
+                    >
+                      <Pencil size={11} /> Edit
+                    </button>
+                  )}
+                </div>
+                {firmEdit ? (
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="label">Firm name</label>
+                      <input className="field" value={firmEdit.name ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, name: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="label">Website</label>
+                      <input className="field" value={firmEdit.website ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, website: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="label">Description</label>
+                      <textarea className="field" rows={3} value={firmEdit.description ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, description: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Default hourly rate</label>
+                        <input className="field" type="number" min="0" step="1" value={firmEdit.default_hourly_rate ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, default_hourly_rate: e.target.value || null })} />
+                      </div>
+                      <div>
+                        <label className="label">Default consultation</label>
+                        <input className="field" type="number" min="0" step="1" value={firmEdit.default_consultation_price ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, default_consultation_price: e.target.value || null })} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => setFirmEdit(null)} className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand">
+                        Cancel
+                      </button>
+                      <button onClick={saveFirm} className="rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand">
+                        Save firm
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted">
+                    <div>
+                      <p className="text-[10px] uppercase">Hourly</p>
+                      <p className="text-ink">{firmDetail.default_hourly_rate ? `$${firmDetail.default_hourly_rate}` : '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase">Consultation</p>
+                      <p className="text-ink">{firmDetail.default_consultation_price ? `$${firmDetail.default_consultation_price}` : '—'}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={leaveFirm}
+              disabled={firmBusy}
+              className="mt-3 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-red-400 hover:text-red-600 disabled:opacity-50"
+            >
+              {firmBusy ? 'Working…' : 'Leave firm'}
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-muted">
+              Joining a firm gives every member shared oversight of all matters assigned to any lawyer in the firm.
+              You can be in one firm at a time.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {allFirms.length === 0 && <p className="text-sm text-muted">No firms available yet.</p>}
+              {allFirms.map((f) => (
+                <div key={f.id} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-ink">{f.name}</p>
+                    <p className="text-[11px] text-muted">{f.lawyer_count} lawyer{f.lawyer_count === 1 ? '' : 's'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => joinFirm(f.id)}
+                    disabled={firmBusy}
+                    className="rounded-md bg-brand-dark px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-brand disabled:opacity-50"
+                  >
+                    Join
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {acctModal && (
+        <PaymentAccountModal
+          mode={acctModal.mode}
+          record={acctModal.record}
+          onClose={() => setAcctModal(null)}
+          onSaved={(saved) => {
+            setAccounts((cur) => {
+              const idx = cur.findIndex((x) => x.id === saved.id);
+              if (idx === -1) return [...cur, saved];
+              const next = [...cur];
+              next[idx] = saved;
+              return next;
+            });
+            setAcctModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PaymentAccountModal({
+  mode,
+  record,
+  onClose,
+  onSaved,
+}: {
+  mode: 'create' | 'edit';
+  record?: PaymentAccount;
+  onClose: () => void;
+  onSaved: (a: PaymentAccount) => void;
+}) {
+  const toast = useToast();
+  const [accountType, setAccountType] = useState<PaymentAccount['account_type']>(
+    record?.account_type ?? 'ecocash'
+  );
+  const [identifier, setIdentifier] = useState(record?.identifier ?? '');
+  const [accountName, setAccountName] = useState(record?.account_name ?? '');
+  const [bankName, setBankName] = useState(record?.bank_name ?? '');
+  const [branch, setBranch] = useState(record?.branch ?? '');
+  const [swiftCode, setSwiftCode] = useState(record?.swift_code ?? '');
+  const [notes, setNotes] = useState(record?.notes ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const isBank = accountType === 'bank';
+  const identifierLabel =
+    accountType === 'bank'
+      ? 'Account number'
+      : accountType === 'cash'
+      ? 'Hand-off location'
+      : 'Phone number';
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const payload = {
+        account_type: accountType,
+        identifier: identifier.trim(),
+        account_name: accountName.trim(),
+        bank_name: isBank ? bankName.trim() : '',
+        branch: isBank ? branch.trim() : '',
+        swift_code: isBank ? swiftCode.trim() : '',
+        notes: notes.trim(),
+      };
+      const saved = mode === 'create' ? await accountsApi.create(payload) : await accountsApi.update(record!.id, payload);
+      toast.success(mode === 'create' ? 'Payment account added.' : 'Payment account updated.');
+      onSaved(saved);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save account.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
+          <h3 className="text-base font-bold">{mode === 'create' ? 'Add payment account' : 'Edit payment account'}</h3>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} className="space-y-4 p-5">
+          <div>
+            <label className="label">Method</label>
+            <div className="grid grid-cols-3 gap-2">
+              {ACCOUNT_TYPES.map((a) => {
+                const active = accountType === a.value;
+                return (
+                  <button
+                    key={a.value}
+                    type="button"
+                    onClick={() => setAccountType(a.value)}
+                    className={`flex flex-col items-start gap-1 rounded-lg border p-2 text-left transition ${
+                      active ? 'border-brand bg-brand/5 ring-1 ring-brand' : 'border-line bg-white hover:border-brand/40'
+                    }`}
+                  >
+                    <span className={`grid h-7 w-7 place-items-center rounded-lg ${active ? 'bg-brand text-white' : 'bg-canvas text-muted'}`}>
+                      <a.icon size={14} />
+                    </span>
+                    <span className={`text-[11px] font-semibold ${active ? 'text-brand-dark' : 'text-ink'}`}>{a.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="label">{identifierLabel}</label>
+            <input className="field" required value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={isBank ? '0000-0000-0000' : '+263 7…'} />
+          </div>
+          <div>
+            <label className="label">Account holder</label>
+            <input className="field" value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="Name on the account" />
+          </div>
+          {isBank && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Bank</label>
+                <input className="field" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Branch</label>
+                <input className="field" value={branch} onChange={(e) => setBranch(e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <label className="label">SWIFT / BIC</label>
+                <input className="field" value={swiftCode} onChange={(e) => setSwiftCode(e.target.value)} />
+              </div>
+            </div>
+          )}
+          <div>
+            <label className="label">Notes (optional)</label>
+            <input className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the payer should know" />
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-brand">
+              Cancel
+            </button>
+            <button disabled={busy} className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand disabled:opacity-50">
+              {busy ? 'Saving…' : mode === 'create' ? 'Add account' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

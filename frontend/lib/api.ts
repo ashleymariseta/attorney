@@ -87,6 +87,7 @@ export interface User {
   last_name: string;
   role: string;
   is_verified: boolean;
+  avatar_url?: string | null;
 }
 export interface MiniUser {
   id: number;
@@ -95,6 +96,7 @@ export interface MiniUser {
   last_name: string;
   full_name: string;
   role: string;
+  avatar_url?: string | null;
 }
 export interface Matter {
   id: number;
@@ -155,6 +157,7 @@ export interface Consultation {
   notes: string;
   confirmed_at: string | null;
   channel_id: number | null;
+  created_at: string;
 }
 export interface Review {
   id: number;
@@ -190,6 +193,13 @@ export interface Transaction {
   status: string;
   status_display: string;
   created_at: string;
+  payment_id?: number;
+  purpose?: string;
+  payer_id?: number;
+  has_proof?: boolean;
+  can_review?: boolean;
+  note?: string;
+  review_note?: string;
 }
 export interface LawyerProfileEdit {
   bar_number: string;
@@ -200,6 +210,41 @@ export interface LawyerProfileEdit {
   hourly_rate: string | null;
   consultation_price: string | null;
   bio: string;
+  firm: number | null;
+  firm_detail: { id: number; name: string; slug: string; website: string; verified: boolean } | null;
+}
+
+export interface FirmCard {
+  id: number;
+  name: string;
+  slug: string;
+  website: string;
+  description?: string;
+  admin?: number | null;
+  default_hourly_rate?: string | null;
+  default_consultation_price?: string | null;
+  verified: boolean;
+  lawyer_count: number;
+  practice_areas: string[];
+  jurisdictions: string[];
+  starting_rate: string | null;
+}
+
+export interface PaymentAccount {
+  id: number;
+  account_type: 'ecocash' | 'onemoney' | 'bank' | 'innbucks' | 'omari' | 'cash' | string;
+  account_type_display: string;
+  identifier: string;
+  account_name: string;
+  bank_name: string;
+  branch: string;
+  swift_code: string;
+  notes: string;
+  is_active: boolean;
+  owner_user: number | null;
+  owner_firm: number | null;
+  created_at: string;
+  updated_at: string;
 }
 export interface Retainer {
   id: number;
@@ -301,6 +346,21 @@ export const matters = {
   }) {
     return api<Matter>('/api/v1/matters/', { method: 'POST', body: JSON.stringify(payload) });
   },
+  lawyerClients() {
+    return api<{ count: number; results: LawyerClient[] }>('/api/v1/matters/lawyer-clients/');
+  },
+  createForClient(payload: {
+    title: string;
+    description?: string;
+    practice_area?: string;
+    client_id?: number;
+    contact?: { first_name: string; last_name: string; email?: string; phone_number?: string };
+  }) {
+    return api<Matter & { invited?: boolean; client_email?: string }>(
+      '/api/v1/matters/create-for-client/',
+      { method: 'POST', body: JSON.stringify(payload) }
+    );
+  },
 };
 
 export const consultations = {
@@ -318,6 +378,71 @@ export const consultations = {
   },
   complete(id: number) {
     return api<Consultation>(`/api/v1/consultations/${id}/complete/`, { method: 'POST' });
+  },
+  reschedule(id: number, scheduledTime: string) {
+    return api<Consultation>(`/api/v1/consultations/${id}/reschedule/`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_time: scheduledTime }),
+    });
+  },
+};
+
+export const firms = {
+  list() {
+    return api<Paginated<FirmCard>>('/api/v1/firms/');
+  },
+  get(id: number) {
+    return api<FirmCard>(`/api/v1/firms/${id}/`);
+  },
+  update(id: number, payload: Partial<FirmCard>) {
+    return api<FirmCard>(`/api/v1/firms/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  join(firmId: number) {
+    return api<FirmCard>('/api/v1/me/firm/', {
+      method: 'POST',
+      body: JSON.stringify({ firm_id: firmId }),
+    });
+  },
+  leave() {
+    return api<void>('/api/v1/me/firm/', { method: 'DELETE' });
+  },
+};
+
+export const paymentAccounts = {
+  mine() {
+    return api<Paginated<PaymentAccount>>('/api/v1/payment-accounts/?scope=mine');
+  },
+  forMatter(matterId: number) {
+    return api<Paginated<PaymentAccount>>(`/api/v1/payment-accounts/?matter=${matterId}`);
+  },
+  create(payload: Partial<PaymentAccount>) {
+    return api<PaymentAccount>('/api/v1/payment-accounts/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  update(id: number, payload: Partial<PaymentAccount>) {
+    return api<PaymentAccount>(`/api/v1/payment-accounts/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  remove(id: number) {
+    return api<void>(`/api/v1/payment-accounts/${id}/`, { method: 'DELETE' });
+  },
+};
+
+export const userMe = {
+  uploadAvatar(file: File) {
+    const form = new FormData();
+    form.append('avatar', file);
+    return api<User>('/api/v1/users/me/avatar/', { method: 'POST', body: form });
+  },
+  removeAvatar() {
+    return api<User>('/api/v1/users/me/avatar/', { method: 'DELETE' });
   },
 };
 
@@ -355,7 +480,23 @@ export const timeEntries = {
   stop(id: number) {
     return api<TimeEntry>(`/api/v1/time-entries/${id}/stop/`, { method: 'POST' });
   },
+  log(payload: { matter: number; minutes: number; description?: string; started_at?: string; is_billable?: boolean }) {
+    return api<TimeEntry>('/api/v1/time-entries/log/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
 };
+
+export interface LawyerClient {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  phone_number: string;
+  relationship: 'retainer' | 'prior_work';
+}
 
 export const transactions = {
   list() {
@@ -425,6 +566,15 @@ export const documents = {
 };
 
 export const payments = {
+  list(params?: { matter?: number; status?: string; purpose?: string }) {
+    const qs = params
+      ? '?' +
+        new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][]
+        ).toString()
+      : '';
+    return api<Paginated<Payment>>(`/api/v1/payments/${qs}`);
+  },
   listForMatter(matterId: number) {
     return api<Paginated<Payment>>(`/api/v1/payments/?matter=${matterId}`);
   },
@@ -437,5 +587,41 @@ export const payments = {
     if (reference) form.append('reference', reference);
     if (note) form.append('note', note);
     return api<Payment>(`/api/v1/payments/${paymentId}/upload-proof/`, { method: 'POST', body: form });
+  },
+  get(id: number) {
+    return api<Payment>(`/api/v1/payments/${id}/`);
+  },
+  review(id: number, payload: { status: 'verified' | 'rejected'; review_note?: string }) {
+    return api<Payment>(`/api/v1/payments/${id}/review/`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  comment(id: number, body: string) {
+    return api<Payment>(`/api/v1/payments/${id}/comment/`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+  },
+  invoicePdfUrl(paymentId: number): string {
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    return `${base}/api/v1/payments/${paymentId}/invoice-pdf/`;
+  },
+  async downloadInvoicePdf(paymentId: number) {
+    const token = getAccess();
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    const res = await fetch(`${base}/api/v1/payments/${paymentId}/invoice-pdf/`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) throw new ApiError(res.status, null, 'Could not download invoice.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Invoice-INV-${String(paymentId).padStart(5, '0')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 };

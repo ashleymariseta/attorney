@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Q
+from datetime import timedelta
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
@@ -21,30 +22,36 @@ from payments.models import Payment, PaymentPurpose, PaymentStatus
 from .models import (
     BillingModel,
     Channel,
+    ClientProfile,
     Consultation,
     ConsultationStatus,
     Document,
+    Firm,
     LawyerProfile,
     Matter,
     Message,
+    PaymentAccount,
     PaymentMethod,
     Retainer,
     RetainerStatus,
     Review,
     TimeEntry,
     TrustTransaction,
+    UserRole,
 )
 from .permissions import IsAdminOrSelf
 from .serializers import (
     ChannelSerializer,
     ConsultationSerializer,
     DocumentSerializer,
+    FirmCardSerializer,
     LawyerCardSerializer,
     LawyerProfileEditSerializer,
     LogoutSerializer,
     MatterCreateSerializer,
     MatterSerializer,
     MessageSerializer,
+    PaymentAccountSerializer,
     RegisterSerializer,
     RetainerSerializer,
     ReviewSerializer,
@@ -93,11 +100,33 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsAdminOrSelf]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     @action(detail=False, permission_classes=[IsAuthenticated])
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['post', 'delete'],
+        url_path='me/avatar',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def avatar(self, request):
+        user = request.user
+        if request.method == 'DELETE':
+            if user.avatar:
+                user.avatar.delete(save=False)
+            user.avatar = None
+            user.save(update_fields=['avatar'])
+            return Response(UserSerializer(user, context={'request': request}).data)
+        file = request.FILES.get('avatar')
+        if not file:
+            raise ValidationError('avatar file is required.')
+        user.avatar = file
+        user.save(update_fields=['avatar'])
+        return Response(UserSerializer(user, context={'request': request}).data)
 
 
 class MyLawyerProfileView(APIView):
@@ -121,6 +150,102 @@ class MyLawyerProfileView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class FirmViewSet(viewsets.ModelViewSet):
+    """Firm directory shown alongside lawyers. Admin of a firm can edit it."""
+
+    serializer_class = FirmCardSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Firm.objects.all().prefetch_related('lawyers').order_by('name')
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def update(self, request, *args, **kwargs):  # PATCH
+        firm = self.get_object()
+        user = request.user
+        if not (_is_platform_admin(user) or firm.admin_id == user.id):
+            raise PermissionDenied('Only the firm admin can edit firm details.')
+        return super().update(request, *args, **kwargs)
+
+
+class PaymentAccountViewSet(viewsets.ModelViewSet):
+    """A lawyer's (or firm's) payment-receiving accounts."""
+
+    serializer_class = PaymentAccountSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = PaymentAccount.objects.none()
+    filterset_fields = ['account_type', 'owner_user', 'owner_firm']
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return PaymentAccount.objects.none()
+        user = self.request.user
+        qs = PaymentAccount.objects.filter(is_active=True).order_by('account_type')
+        scope = self.request.query_params.get('scope')
+        matter_id = self.request.query_params.get('matter')
+        if scope == 'mine':
+            return qs.filter(owner_user=user)
+        if matter_id:
+            matter = Matter.objects.filter(pk=matter_id).first()
+            if matter is None:
+                return qs.none()
+            # Only matter participants can see the lawyer's accounts.
+            if matter.client_id != user.id and not matter.lawyers.filter(pk=user.pk).exists() and not _is_platform_admin(user):
+                return qs.none()
+            lawyer_ids = list(matter.lawyers.values_list('id', flat=True))
+            firm_ids = list(
+                LawyerProfile.objects.filter(user_id__in=lawyer_ids, firm_id__isnull=False)
+                .values_list('firm_id', flat=True)
+            )
+            return qs.filter(Q(owner_user_id__in=lawyer_ids) | Q(owner_firm_id__in=firm_ids))
+        # Default: just the user's own accounts.
+        return qs.filter(owner_user=user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner_user=self.request.user)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        user = self.request.user
+        if instance.owner_user_id and instance.owner_user_id != user.id and not _is_platform_admin(user):
+            raise PermissionDenied('Not your account.')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        user = self.request.user
+        if instance.owner_user_id and instance.owner_user_id != user.id and not _is_platform_admin(user):
+            raise PermissionDenied('Not your account.')
+        instance.delete()
+
+
+class JoinFirmView(APIView):
+    """Lawyer joins (or leaves) a firm. POST {firm_id} to join; DELETE to leave."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _profile(self, request):
+        if not _is_lawyer(request.user):
+            raise PermissionDenied('Only lawyers can join a firm.')
+        profile, _ = LawyerProfile.objects.get_or_create(user=request.user)
+        return profile
+
+    def post(self, request):
+        profile = self._profile(request)
+        firm_id = request.data.get('firm_id')
+        if firm_id is None:
+            raise ValidationError('firm_id is required.')
+        firm = Firm.objects.filter(pk=firm_id).first()
+        if firm is None:
+            raise ValidationError('Firm not found.')
+        profile.firm = firm
+        profile.save(update_fields=['firm'])
+        return Response(FirmCardSerializer(firm).data)
+
+    def delete(self, request):
+        profile = self._profile(request)
+        profile.firm = None
+        profile.save(update_fields=['firm'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class LawyerViewSet(viewsets.ReadOnlyModelViewSet):
@@ -166,7 +291,15 @@ class MatterViewSet(viewsets.ModelViewSet):
         base = Matter.objects.prefetch_related('lawyers', 'channels').select_related('client')
         if _is_platform_admin(user):
             return base.all()
-        return base.filter(Q(client=user) | Q(lawyers=user)).distinct()
+        scope = Q(client=user) | Q(lawyers=user)
+        # If this lawyer is in a firm, also surface any matter assigned to a
+        # lawyer of the same firm — gives the firm shared oversight.
+        if _is_lawyer(user):
+            profile = getattr(user, 'lawyer_profile', None)
+            firm_id = getattr(profile, 'firm_id', None)
+            if firm_id:
+                scope |= Q(lawyers__lawyer_profile__firm_id=firm_id)
+        return base.filter(scope).distinct()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -230,6 +363,109 @@ class MatterViewSet(viewsets.ModelViewSet):
         body['consultation_id'] = consultation.id if consultation else None
         body['consultation'] = ConsultationSerializer(consultation).data if consultation else None
         body['payment_id'] = payment.id if payment else None
+        return Response(body, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='lawyer-clients')
+    def lawyer_clients(self, request):
+        """Clients this lawyer can act for — those on retainer + those they've worked with."""
+        if not _is_lawyer(request.user):
+            raise PermissionDenied('Only lawyers can list clients.')
+
+        retainer_client_ids = set(
+            Retainer.objects.filter(lawyer=request.user, status=RetainerStatus.ACTIVE)
+            .values_list('client_id', flat=True)
+        )
+        worked_client_ids = set(
+            Matter.objects.filter(lawyers=request.user)
+            .values_list('client_id', flat=True)
+        )
+        all_ids = retainer_client_ids | worked_client_ids
+        users = User.objects.filter(pk__in=all_ids).order_by('first_name', 'last_name')
+
+        results = []
+        for u in users:
+            results.append({
+                'id': u.id,
+                'email': u.email,
+                'first_name': u.first_name,
+                'last_name': u.last_name,
+                'full_name': u.get_full_name() or u.email,
+                'phone_number': getattr(u, 'phone_number', '') or '',
+                'relationship': 'retainer' if u.id in retainer_client_ids else 'prior_work',
+            })
+        return Response({'results': results, 'count': len(results)})
+
+    @action(detail=False, methods=['post'], url_path='create-for-client')
+    def create_for_client(self, request):
+        """Lawyer creates a matter and assigns/invites a client."""
+        if not _is_lawyer(request.user):
+            raise PermissionDenied('Only lawyers can create matters for clients.')
+
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            raise ValidationError('A title is required.')
+
+        client_id = request.data.get('client_id')
+        contact = request.data.get('contact') or {}
+        invited = False
+        client = None
+
+        if client_id:
+            client = User.objects.filter(pk=client_id).first()
+            if client is None:
+                raise ValidationError('Client not found.')
+        else:
+            first_name = (contact.get('first_name') or '').strip()
+            last_name = (contact.get('last_name') or '').strip()
+            phone = (contact.get('phone_number') or '').strip()
+            email_raw = (contact.get('email') or '').strip().lower()
+            if not first_name or not last_name:
+                raise ValidationError('Contact requires first and last name.')
+            if not phone and not email_raw:
+                raise ValidationError('Contact requires either phone number or email.')
+
+            email = email_raw or f'invite+{phone or first_name.lower()}.{last_name.lower()}.{int(timezone.now().timestamp())}@invite.attorney.local'
+            existing = User.objects.filter(email__iexact=email).first()
+            if existing:
+                client = existing
+            else:
+                client = User.objects.create(
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone_number=phone,
+                    role=UserRole.CLIENT_INDIVIDUAL,
+                    is_active=True,
+                    is_verified=False,
+                )
+                client.set_unusable_password()
+                client.save(update_fields=['password'])
+                ClientProfile.objects.get_or_create(user=client)
+                invited = True
+                # Notification stub — wire up email/SMS provider later.
+                print(
+                    f'[INVITE] {request.user.get_full_name() or request.user.email} '
+                    f'invited {client.email} (phone={phone or "—"}) to matter "{title}".'
+                )
+
+        matter = Matter.objects.create(
+            title=title,
+            description=(request.data.get('description') or '').strip(),
+            practice_area=(request.data.get('practice_area') or '').strip(),
+            client=client,
+            billing_model=BillingModel.RETAINER if client.id in set(
+                Retainer.objects.filter(lawyer=request.user, status=RetainerStatus.ACTIVE)
+                .values_list('client_id', flat=True)
+            ) else BillingModel.CONSULTATION,
+        )
+        matter.lawyers.add(request.user)
+
+        channel = Channel.objects.create(channel_type='matter', matter=matter, name=title)
+        channel.members.add(request.user, client)
+
+        body = MatterSerializer(matter, context=self.get_serializer_context()).data
+        body['invited'] = invited
+        body['client_email'] = client.email
         return Response(body, status=status.HTTP_201_CREATED)
 
 
@@ -314,6 +550,30 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         self._require_lawyer_or_admin(consultation)
         consultation.status = ConsultationStatus.COMPLETED
         consultation.save(update_fields=['status'])
+        return Response(self.get_serializer(consultation).data)
+
+    @action(detail=True, methods=['post'])
+    def reschedule(self, request, pk=None):
+        from django.utils.dateparse import parse_datetime
+
+        consultation = self.get_object()
+        raw = request.data.get('scheduled_time')
+        if not raw:
+            raise ValidationError('scheduled_time is required.')
+        parsed = parse_datetime(raw)
+        if parsed is None:
+            raise ValidationError('Invalid scheduled_time.')
+        if not timezone.is_aware(parsed):
+            parsed = timezone.make_aware(parsed)
+        consultation.scheduled_time = parsed
+        # Re-rescheduling resets a confirmed booking to pending so the other party
+        # has to re-confirm the new slot.
+        if consultation.status == ConsultationStatus.CONFIRMED:
+            consultation.status = ConsultationStatus.PENDING
+            consultation.confirmed_at = None
+            consultation.save(update_fields=['scheduled_time', 'status', 'confirmed_at'])
+        else:
+            consultation.save(update_fields=['scheduled_time'])
         return Response(self.get_serializer(consultation).data)
 
 
@@ -431,6 +691,46 @@ class TimeEntryViewSet(viewsets.ModelViewSet):
         entry = TimeEntry.objects.filter(lawyer=request.user, ended_at__isnull=True).first()
         return Response(self.get_serializer(entry).data if entry else None)
 
+    @action(detail=False, methods=['post'])
+    def log(self, request):
+        """Manually log a completed time entry (timesheet)."""
+        if not _is_lawyer(request.user):
+            raise PermissionDenied('Only lawyers can log billable time.')
+        matter_id = request.data.get('matter')
+        minutes = request.data.get('minutes')
+        try:
+            minutes = int(minutes)
+        except (TypeError, ValueError):
+            raise ValidationError('minutes must be an integer.')
+        if minutes <= 0:
+            raise ValidationError('minutes must be greater than zero.')
+        matter = Matter.objects.filter(pk=matter_id, lawyers=request.user).first()
+        if matter is None:
+            raise ValidationError('You are not assigned to that matter.')
+        started_raw = request.data.get('started_at')
+        started_at = timezone.now()
+        if started_raw:
+            try:
+                from django.utils.dateparse import parse_datetime
+                parsed = parse_datetime(started_raw)
+                if parsed is not None:
+                    started_at = parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
+            except Exception:
+                pass
+        rate = _lawyer_rate(request.user)
+        entry = TimeEntry.objects.create(
+            matter=matter,
+            lawyer=request.user,
+            description=request.data.get('description', ''),
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=minutes),
+            minutes=minutes,
+            rate_snapshot=rate,
+            amount=_price_for(rate, minutes),
+            is_billable=bool(request.data.get('is_billable', True)),
+        )
+        return Response(self.get_serializer(entry).data, status=status.HTTP_201_CREATED)
+
 
 class TrustTransactionViewSet(viewsets.ModelViewSet):
     serializer_class = TrustTransactionSerializer
@@ -465,10 +765,22 @@ class TransactionsView(APIView):
             trust = trust.filter(scope).distinct()
 
         items = []
+        # Set of matter IDs where the current user is an assigned lawyer.
+        assigned_matter_ids = set(
+            Matter.objects.filter(lawyers=user).values_list('id', flat=True)
+        )
         for p in payments:
+            can_review = admin or p.matter_id in assigned_matter_ids
             items.append({
                 'id': f'pay-{p.id}',
                 'kind': 'payment',
+                'payment_id': p.id,
+                'purpose': p.purpose,
+                'payer_id': p.payer_id,
+                'has_proof': p.has_proof,
+                'can_review': can_review,
+                'note': p.note or '',
+                'review_note': p.review_note or '',
                 'matter': p.matter_id,
                 'matter_title': p.matter.title,
                 'label': p.get_purpose_display(),

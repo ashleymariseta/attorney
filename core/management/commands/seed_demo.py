@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from core.models import (
     ClientProfile,
+    Firm,
     LawyerProfile,
     Matter,
     Retainer,
@@ -78,6 +79,16 @@ class Command(BaseCommand):
     help = 'Seed demo lawyers, a demo client, and one retainer relationship.'
 
     def handle(self, *args, **options):
+        firms_data = [
+            {'name': 'Dube & Partners', 'slug': 'dube-partners', 'website': 'https://dubepartners.test', 'verified': True},
+            {'name': 'Moyo Khumalo Inc.', 'slug': 'moyo-khumalo', 'website': 'https://moyokhumalo.test', 'verified': True},
+        ]
+        firms = []
+        for f in firms_data:
+            firm, _ = Firm.objects.get_or_create(slug=f['slug'], defaults=f)
+            firms.append(firm)
+        self.stdout.write(self.style.SUCCESS(f'Seeded {len(firms)} firms.'))
+
         created_lawyers = []
         for data in LAWYERS:
             user, created = User.objects.get_or_create(
@@ -101,6 +112,8 @@ class Command(BaseCommand):
             profile.consultation_price = data['consultation_price']
             profile.bio = data['bio']
             profile.verified_at = timezone.now()
+            # First two lawyers join firm #1, next two firm #2.
+            profile.firm = firms[0] if len(created_lawyers) < 2 else firms[1]
             profile.save()
             created_lawyers.append(user)
         self.stdout.write(self.style.SUCCESS(f'Seeded {len(created_lawyers)} lawyers.'))

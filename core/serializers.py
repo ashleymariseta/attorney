@@ -60,18 +60,41 @@ class MiniUserSerializer(serializers.ModelSerializer):
     """Compact user representation for nesting (sender, members, lawyer)."""
 
     full_name = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'role']
+        fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'role', 'avatar_url']
+
+    def get_avatar_url(self, obj):
+        request = self.context.get('request')
+        if not obj.avatar:
+            return None
+        url = obj.avatar.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_full_name(self, obj):
         return f'{obj.first_name} {obj.last_name}'.strip() or obj.email
 
 
+class PaymentAccountSerializer(serializers.ModelSerializer):
+    account_type_display = serializers.CharField(source='get_account_type_display', read_only=True)
+
+    class Meta:
+        from .models import PaymentAccount
+        model = PaymentAccount
+        fields = [
+            'id', 'account_type', 'account_type_display', 'identifier', 'account_name',
+            'bank_name', 'branch', 'swift_code', 'notes', 'is_active',
+            'owner_user', 'owner_firm', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['owner_user', 'owner_firm', 'created_at', 'updated_at']
+
+
 class UserSerializer(serializers.ModelSerializer):
     lawyer_profile = LawyerProfileSerializer(read_only=True)
     client_profile = ClientProfileSerializer(read_only=True)
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -82,6 +105,8 @@ class UserSerializer(serializers.ModelSerializer):
             'last_name',
             'phone_number',
             'role',
+            'avatar',
+            'avatar_url',
             'is_staff',
             'is_active',
             'is_verified',
@@ -89,7 +114,15 @@ class UserSerializer(serializers.ModelSerializer):
             'lawyer_profile',
             'client_profile',
         ]
-        read_only_fields = ['is_staff', 'is_active', 'is_verified', 'date_joined']
+        read_only_fields = ['is_staff', 'is_active', 'is_verified', 'date_joined', 'avatar_url']
+        extra_kwargs = {'avatar': {'write_only': True, 'required': False}}
+
+    def get_avatar_url(self, obj):
+        request = self.context.get('request')
+        if not obj.avatar:
+            return None
+        url = obj.avatar.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class LawyerCardSerializer(serializers.ModelSerializer):
@@ -127,6 +160,51 @@ class LawyerCardSerializer(serializers.ModelSerializer):
 
     def get_review_count(self, obj):
         return getattr(obj, 'review_count', 0) or 0
+
+
+class FirmCardSerializer(serializers.ModelSerializer):
+    """A firm shown in the directory, aggregated stats included."""
+
+    lawyer_count = serializers.SerializerMethodField()
+    practice_areas = serializers.SerializerMethodField()
+    jurisdictions = serializers.SerializerMethodField()
+    starting_rate = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import Firm
+        model = Firm
+        fields = [
+            'id', 'name', 'slug', 'website', 'verified',
+            'description', 'admin', 'default_hourly_rate', 'default_consultation_price',
+            'lawyer_count', 'practice_areas', 'jurisdictions', 'starting_rate',
+        ]
+
+    def get_lawyer_count(self, obj):
+        return obj.lawyers.count()
+
+    def get_practice_areas(self, obj):
+        seen = []
+        for prof in obj.lawyers.all():
+            for area in prof.practice_areas or []:
+                if area not in seen:
+                    seen.append(area)
+        return seen
+
+    def get_jurisdictions(self, obj):
+        seen = []
+        for prof in obj.lawyers.all():
+            for j in prof.jurisdictions or []:
+                if j not in seen:
+                    seen.append(j)
+        return seen
+
+    def get_starting_rate(self, obj):
+        rates = [p.hourly_rate for p in obj.lawyers.all() if p.hourly_rate is not None]
+        return str(min(rates)) if rates else None
+
+
+class FirmJoinSerializer(serializers.Serializer):
+    firm_id = serializers.IntegerField(required=False, allow_null=True)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -259,12 +337,27 @@ class TimeEntrySerializer(serializers.ModelSerializer):
 class LawyerProfileEditSerializer(serializers.ModelSerializer):
     """Lawyer-editable profile (rate, areas, bio…)."""
 
+    firm_detail = serializers.SerializerMethodField()
+
     class Meta:
         model = LawyerProfile
         fields = [
             'bar_number', 'jurisdictions', 'practice_areas', 'languages',
             'years_experience', 'hourly_rate', 'consultation_price', 'bio',
+            'firm', 'firm_detail',
         ]
+        read_only_fields = ['firm']
+
+    def get_firm_detail(self, obj):
+        if obj.firm_id is None:
+            return None
+        return {
+            'id': obj.firm.id,
+            'name': obj.firm.name,
+            'slug': obj.firm.slug,
+            'website': obj.firm.website,
+            'verified': obj.firm.verified,
+        }
 
 
 class TrustTransactionSerializer(serializers.ModelSerializer):

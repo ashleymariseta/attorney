@@ -5,12 +5,15 @@ from .views import (
     UserViewSet,
     MyLawyerProfileView,
     LawyerViewSet,
+    FirmViewSet,
+    JoinFirmView,
     MatterViewSet,
     ChannelViewSet,
     MessageViewSet,
     ConsultationViewSet,
     RetainerViewSet,
     DocumentViewSet,
+    PaymentAccountViewSet,
     ReviewViewSet,
     TimeEntryViewSet,
     TrustTransactionViewSet,
@@ -24,6 +27,8 @@ router = DefaultRouter()
 router.register('users', UserViewSet, basename='user')
 router.register('register', RegisterAPIView, basename='register')
 router.register('lawyers', LawyerViewSet, basename='lawyer')
+router.register('firms', FirmViewSet, basename='firm')
+router.register('payment-accounts', PaymentAccountViewSet, basename='paymentaccount')
 router.register('matters', MatterViewSet, basename='matter')
 router.register('channels', ChannelViewSet, basename='channel')
 router.register('messages', MessageViewSet, basename='message')
@@ -37,6 +42,7 @@ router.register('trust-transactions', TrustTransactionViewSet, basename='trusttr
 urlpatterns = [
     path('', include(router.urls)),
     path('me/lawyer-profile/', MyLawyerProfileView.as_view(), name='my-lawyer-profile'),
+    path('me/firm/', JoinFirmView.as_view(), name='me-firm'),
     path('transactions/', TransactionsView.as_view(), name='transactions'),
     path('auth/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),

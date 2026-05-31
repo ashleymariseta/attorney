@@ -41,6 +41,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=120)
     phone_number = models.CharField(max_length=32, blank=True)
     role = models.CharField(max_length=32, choices=UserRole.choices, default=UserRole.CLIENT_INDIVIDUAL)
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
@@ -59,11 +60,53 @@ class Firm(models.Model):
     name = models.CharField(max_length=240)
     slug = models.SlugField(unique=True)
     website = models.URLField(blank=True)
+    description = models.TextField(blank=True)
+    admin = models.ForeignKey(
+        'core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='admin_of_firms'
+    )
+    default_hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    default_consultation_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
+
+
+class PaymentAccountType(models.TextChoices):
+    ECOCASH = 'ecocash', 'EcoCash'
+    ONEMONEY = 'onemoney', 'OneMoney'
+    BANK = 'bank', 'Bank'
+    INNBUCKS = 'innbucks', 'InnBucks'
+    OMARI = 'omari', "O'mari"
+    CASH = 'cash', 'Cash'
+
+
+class PaymentAccount(models.Model):
+    """Where clients should send payment for a given lawyer or firm."""
+
+    owner_user = models.ForeignKey(
+        'core.User', null=True, blank=True, on_delete=models.CASCADE, related_name='payment_accounts'
+    )
+    owner_firm = models.ForeignKey(
+        Firm, null=True, blank=True, on_delete=models.CASCADE, related_name='payment_accounts'
+    )
+    account_type = models.CharField(max_length=16, choices=PaymentAccountType.choices)
+    identifier = models.CharField(max_length=120)
+    account_name = models.CharField(max_length=240, blank=True)
+    bank_name = models.CharField(max_length=120, blank=True)
+    branch = models.CharField(max_length=120, blank=True)
+    swift_code = models.CharField(max_length=32, blank=True)
+    notes = models.CharField(max_length=240, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['account_type']
+
+    def __str__(self):
+        return f'{self.get_account_type_display()} · {self.identifier}'
 
 
 class LawyerProfile(models.Model):

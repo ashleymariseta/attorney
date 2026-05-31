@@ -3,7 +3,8 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Calendar, GraduationCap, Home, Menu, Settings, Wallet } from 'lucide-react';
+import { Calendar, Clock, GraduationCap, Home, Menu, Plus, Search, Settings, Wallet, X } from 'lucide-react';
+import CreateMatterModal from '@/components/CreateMatterModal';
 import {
   createContext,
   useCallback,
@@ -55,6 +56,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [ready, setReady] = useState(false);
   const [open, setOpen] = useState(false);
+  const [matterQuery, setMatterQuery] = useState('');
+  const [createMatterOpen, setCreateMatterOpen] = useState(false);
 
   const reloadMatters = useCallback(async () => setMatters((await mattersApi.list()).results), []);
   const reloadRetainers = useCallback(async () => setRetainers((await retainersApi.list()).results), []);
@@ -135,23 +138,77 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {navItem('/dashboard', 'Dashboard', <Home size={16} />)}
         {isClient && navItem('/my-lawyers', 'My Legal Team', <GraduationCap size={16} />)}
         {navItem('/bookings', isLawyer ? 'Bookings' : 'My Bookings', <Calendar size={16} />, pendingBookings)}
+        {isLawyer && navItem('/billables', 'Billables', <Clock size={16} />)}
         {navItem('/transactions', 'Transactions', <Wallet size={16} />)}
         {isLawyer && navItem('/settings', 'Settings & Rate', <Settings size={16} />)}
       </nav>
 
-      <div className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted">Matters</div>
+      <div className="flex items-center justify-between px-4 pb-1 pt-3">
+        <div className="flex items-center gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Matters</p>
+          {matters.length > 3 && (
+            <span className="text-[10px] text-muted">{matters.length}</span>
+          )}
+        </div>
+        {isLawyer && (
+          <button
+            type="button"
+            onClick={() => setCreateMatterOpen(true)}
+            aria-label="New matter"
+            title="New matter"
+            className="grid h-6 w-6 place-items-center rounded-full bg-brand-light/20 text-brand-dark transition hover:bg-brand-light/35"
+          >
+            <Plus size={14} strokeWidth={2.5} />
+          </button>
+        )}
+      </div>
+      {matters.length > 0 && (
+        <div className="px-2 pb-1">
+          <div
+            className={`flex items-center gap-1.5 rounded-md border bg-white px-2 transition ${
+              matterQuery ? 'border-brand' : 'border-line'
+            }`}
+          >
+            <Search size={12} className="text-muted" />
+            <input
+              type="text"
+              value={matterQuery}
+              onChange={(e) => setMatterQuery(e.target.value)}
+              placeholder="Search matters…"
+              className="w-full bg-transparent py-1 text-xs text-ink placeholder:text-muted focus:outline-none"
+            />
+            {matterQuery && (
+              <button
+                type="button"
+                onClick={() => setMatterQuery('')}
+                aria-label="Clear search"
+                className="text-muted hover:text-ink"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
         {matters.length === 0 && <p className="px-3 py-2 text-xs text-muted">No matters yet.</p>}
-        {matters.map((m) => {
-          const active = pathname === `/matters/${m.id}`;
-          return (
-            <Link key={m.id} href={`/matters/${m.id}`}
-              className={`side-link ${active ? 'side-link-active' : ''}`} title={m.title}>
-              <span className="text-muted">#</span>
-              <span className="truncate">{m.title}</span>
-            </Link>
-          );
-        })}
+        {(() => {
+          const q = matterQuery.trim().toLowerCase();
+          const visible = q ? matters.filter((m) => m.title.toLowerCase().includes(q)) : matters;
+          if (matters.length > 0 && visible.length === 0) {
+            return <p className="px-3 py-2 text-xs text-muted">No matches for &ldquo;{matterQuery}&rdquo;.</p>;
+          }
+          return visible.map((m) => {
+            const active = pathname === `/matters/${m.id}`;
+            return (
+              <Link key={m.id} href={`/matters/${m.id}`}
+                className={`side-link ${active ? 'side-link-active' : ''}`} title={m.title}>
+                <span className="text-muted">#</span>
+                <span className="truncate">{m.title}</span>
+              </Link>
+            );
+          });
+        })()}
       </div>
 
       <div className="border-t border-line p-3">
@@ -193,6 +250,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
+      {createMatterOpen && (
+        <CreateMatterModal
+          onClose={() => setCreateMatterOpen(false)}
+          onCreated={() => reloadMatters()}
+        />
+      )}
     </Ctx.Provider>
   );
 }

@@ -72,14 +72,20 @@ export default function BookingsPage() {
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="min-w-[760px]">
           {/* day headers */}
-          <div className="sticky top-0 z-10 grid grid-cols-[56px_repeat(7,1fr)] border-b border-line bg-surface">
+          <div className="sticky top-0 z-10 grid grid-cols-[56px_repeat(7,1fr)] border-b border-line bg-brand-dark text-white">
             <div />
             {days.map((d) => {
               const isToday = sameDay(d, today);
               return (
-                <div key={d.toISOString()} className="border-l border-line px-2 py-2 text-center">
-                  <p className="text-[11px] uppercase text-muted">{d.toLocaleDateString([], { weekday: 'short' })}</p>
-                  <p className={`mx-auto mt-0.5 grid h-7 w-7 place-items-center rounded-full text-sm font-semibold ${isToday ? 'bg-brand text-white' : ''}`}>
+                <div key={d.toISOString()} className="border-l border-white/10 px-2 py-2 text-center">
+                  <p className="text-[11px] uppercase tracking-wide text-white/60">
+                    {d.toLocaleDateString([], { weekday: 'short' })}
+                  </p>
+                  <p
+                    className={`mx-auto mt-0.5 grid h-7 w-7 place-items-center rounded-full text-sm font-semibold ${
+                      isToday ? 'bg-white text-brand-dark' : 'text-white'
+                    }`}
+                  >
                     {d.getDate()}
                   </p>
                 </div>
@@ -94,7 +100,7 @@ export default function BookingsPage() {
               {HOURS.map((h) => (
                 <div key={h} style={{ height: HOUR_PX }} className="relative">
                   <span className="absolute -top-2 right-1 text-[10px] text-muted">
-                    {h % 12 === 0 ? 12 : h % 12}{h < 12 ? 'a' : 'p'}
+                    {String(h).padStart(2, '0')}:00
                   </span>
                 </div>
               ))}
@@ -120,7 +126,7 @@ export default function BookingsPage() {
                       >
                         <p className="font-semibold leading-tight">{c.matter_title}</p>
                         <p className="opacity-80">
-                          {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {c.mode_display}
+                          {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })} · {c.mode_display}
                         </p>
                       </button>
                     );
@@ -164,7 +170,7 @@ function BookingDetail({
           <div>
             <h2 className="text-lg font-bold">{c.matter_title}</h2>
             <p className="text-sm text-muted">
-              {dt.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              {dt.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
             </p>
           </div>
           <button onClick={onClose} className="btn-ghost px-2 py-1 text-xl leading-none">×</button>

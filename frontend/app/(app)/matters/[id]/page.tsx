@@ -14,6 +14,13 @@ import {
   Link2,
   X,
   Send,
+  CalendarDays,
+  CalendarClock,
+  Check,
+  FileText,
+  Receipt,
+  ThumbsDown,
+  ThumbsUp,
   Image as ImageIcon,
 } from 'lucide-react';
 import {
@@ -21,11 +28,14 @@ import {
   messages as messagesApi,
   documents as documentsApi,
   payments as paymentsApi,
+  consultations as consultationsApi,
   timeEntries as timeApi,
   reviews as reviewsApi,
   ApiError,
+  type Consultation,
   type Matter,
   type Message,
+  type MiniUser,
   type DocumentItem,
   type Payment,
   type TimeEntry,
@@ -34,6 +44,8 @@ import {
 import { useApp } from '@/components/AppShell';
 import { StarRating, StarInput } from '@/components/Stars';
 import ChatDoodles from '@/components/ChatDoodles';
+import PayInvoiceModal from '@/components/PayInvoiceModal';
+import { useToast } from '@/components/Toast';
 
 type DrawerTab = 'media' | 'links' | 'drafts' | 'payments' | 'time' | 'reviews';
 
@@ -44,10 +56,541 @@ interface AttachAction {
   onClick: () => void;
 }
 
+type TimelineItem =
+  | { kind: 'message'; at: string; m: Message }
+  | { kind: 'document'; at: string; d: DocumentItem }
+  | { kind: 'payment'; at: string; p: Payment }
+  | { kind: 'consultation'; at: string; c: Consultation };
+
+function buildTimeline(
+  msgs: Message[],
+  docs: DocumentItem[],
+  pays: Payment[],
+  consults: Consultation[]
+): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...msgs.map<TimelineItem>((m) => ({ kind: 'message', at: m.created_at, m })),
+    ...docs.map<TimelineItem>((d) => ({ kind: 'document', at: d.created_at, d })),
+    ...pays.map<TimelineItem>((p) => ({ kind: 'payment', at: p.created_at, p })),
+    ...consults.map<TimelineItem>((c) => ({
+      kind: 'consultation',
+      at: c.created_at ?? c.scheduled_time ?? new Date().toISOString(),
+      c,
+    })),
+  ];
+  items.sort((a, b) => +new Date(a.at) - +new Date(b.at));
+  return items;
+}
+
+function statusTone(status: string): string {
+  if (/verified|confirmed|completed|active|paid/i.test(status))
+    return 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200';
+  if (/pending|awaiting|review/i.test(status))
+    return 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200';
+  if (/rejected|failed|cancelled|declined/i.test(status))
+    return 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200';
+  return 'bg-line/60 text-muted ring-1 ring-inset ring-line';
+}
+
+function StatusPill({ status, label }: { status: string; label: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone(
+        status
+      )}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+      {label.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+/* ---------------- Inline timeline widgets ---------------- */
+function avatarInitials(u?: MiniUser | null) {
+  const src = u?.full_name || u?.email || '';
+  return src.split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase() || '?';
+}
+
+function TimelineCard({
+  icon: Icon,
+  iconTone,
+  title,
+  subtitle,
+  status,
+  statusLabel,
+  children,
+  action,
+  time,
+  mine,
+  by,
+  grouped,
+  onClick,
+}: {
+  icon: LucideIcon;
+  iconTone?: string;
+  title: string;
+  subtitle?: React.ReactNode;
+  status?: string;
+  statusLabel?: string;
+  children?: React.ReactNode;
+  action?: React.ReactNode;
+  time: string;
+  mine: boolean;
+  by?: MiniUser | null;
+  grouped?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <div className={`flex ${mine ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-3'}`}>
+      {!mine && (
+        <div className={`mr-2 h-7 w-7 shrink-0 ${grouped ? 'invisible' : ''}`}>
+          <div className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-bold text-brand">
+            {avatarInitials(by)}
+          </div>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-[320px] max-w-full overflow-hidden rounded-t-2xl border border-line bg-white text-left shadow-sm transition hover:border-brand"
+      >
+        <div className="h-4 bg-brand" />
+        <div className="px-3 py-2.5">
+          {!mine && !grouped && by?.full_name && (
+            <p className="mb-1 text-xs font-semibold text-brand">{by.full_name}</p>
+          )}
+          <div className="flex items-start gap-3">
+            <span
+              className={`grid h-12 w-12 shrink-0 place-items-center rounded-full ${
+                iconTone ?? 'bg-brand-light/15 text-brand-dark'
+              }`}
+            >
+              <Icon size={21} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-semibold text-ink">{title}</p>
+              {subtitle && <p className="mt-0.5 truncate text-[11px] text-muted">{subtitle}</p>}
+              {children}
+            </div>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2">
+            <div className="flex items-center gap-2">
+              {status && statusLabel && <StatusPill status={status} label={statusLabel} />}
+              <p className="text-[10px] text-muted">
+                {new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+            {action && <span onClick={(e) => e.stopPropagation()}>{action}</span>}
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function DocumentCard({
+  d,
+  mine,
+  grouped,
+  onClick,
+}: {
+  d: DocumentItem;
+  mine: boolean;
+  grouped?: boolean;
+  onClick?: () => void;
+}) {
+  const isDraft = d.kind === 'draft';
+  return (
+    <TimelineCard
+      icon={isDraft ? PenLine : FileText}
+      title={d.title}
+      subtitle={
+        <>
+          {isDraft ? 'Draft' : 'Document'} · v{d.version}
+        </>
+      }
+      time={d.created_at}
+      mine={mine}
+      by={d.uploader_detail}
+      grouped={grouped}
+      onClick={onClick}
+      action={
+        d.file_url ? (
+          <a
+            href={d.file_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
+          >
+            Open
+          </a>
+        ) : null
+      }
+    />
+  );
+}
+
+function PaymentCard({
+  p,
+  mine,
+  by,
+  grouped,
+  onClick,
+  onPay,
+  onApprove,
+  onReject,
+  canReview,
+}: {
+  p: Payment;
+  mine: boolean;
+  by?: MiniUser | null;
+  grouped?: boolean;
+  onClick?: () => void;
+  onPay?: (p: Payment) => void;
+  onApprove?: (p: Payment) => void;
+  onReject?: (p: Payment) => void;
+  canReview?: boolean;
+}) {
+  const isPending = /pending|awaiting|review/i.test(p.status);
+  const hasProof = !!p.proof_of_payment_url;
+  return (
+    <TimelineCard
+      icon={Receipt}
+      iconTone="bg-emerald-50 text-emerald-700"
+      title="Payment Request"
+      subtitle={
+        <>
+          ${Number(p.amount).toFixed(2)} {p.currency} ·{' '}
+          <span className="capitalize">{p.purpose?.replace(/_/g, ' ') || 'Payment'}</span>
+        </>
+      }
+      status={p.status}
+      statusLabel={p.status_display || p.status}
+      time={p.created_at}
+      mine={mine}
+      by={by}
+      grouped={grouped}
+      onClick={onClick}
+      action={
+        <span className="flex items-center gap-1">
+          {hasProof && (
+            <a
+              href={p.proof_of_payment_url!}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
+            >
+              POP
+            </a>
+          )}
+          {mine && onPay && !hasProof && isPending && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onPay(p);
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-brand-dark px-2 py-1 text-[10px] font-semibold text-white hover:bg-brand"
+            >
+              Pay
+            </button>
+          )}
+          {canReview && onApprove && isPending && hasProof && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onApprove(p);
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-500"
+              title="Approve"
+            >
+              <ThumbsUp size={11} />
+            </button>
+          )}
+          {canReview && onReject && isPending && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReject(p);
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100"
+              title="Reject"
+            >
+              <ThumbsDown size={11} />
+            </button>
+          )}
+        </span>
+      }
+    />
+  );
+}
+
+function DetailModal({
+  item,
+  onClose,
+  meId,
+  matterClientId,
+  onPay,
+}: {
+  item: TimelineItem;
+  onClose: () => void;
+  meId?: number;
+  matterClientId?: number;
+  onPay?: (p: Payment) => void;
+}) {
+  const HeaderIcon: LucideIcon =
+    item.kind === 'payment'
+      ? Receipt
+      : item.kind === 'document'
+      ? item.d.kind === 'draft'
+        ? PenLine
+        : FileText
+      : item.kind === 'consultation'
+      ? CalendarDays
+      : Send;
+  const headerTitle =
+    item.kind === 'payment'
+      ? 'Payment Request'
+      : item.kind === 'document'
+      ? item.d.kind === 'draft'
+        ? 'Draft'
+        : 'Document'
+      : item.kind === 'consultation'
+      ? 'Consultation'
+      : 'Message';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
+              <HeaderIcon size={18} />
+            </span>
+            <h3 className="text-base font-bold">{headerTitle}</h3>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 transition hover:bg-white/15 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="space-y-3 p-5 text-sm">
+          {item.kind === 'payment' && (
+            <PaymentDetail
+              p={item.p}
+              canPay={!!onPay && matterClientId != null && matterClientId === meId && !item.p.proof_of_payment_url}
+              onPay={() => {
+                if (item.kind === 'payment' && onPay) {
+                  onClose();
+                  onPay(item.p);
+                }
+              }}
+            />
+          )}
+          {item.kind === 'document' && <DocumentDetail d={item.d} />}
+          {item.kind === 'consultation' && <ConsultationDetail c={item.c} />}
+          {item.kind === 'message' && (
+            <p className="whitespace-pre-wrap break-words text-ink">{item.m.content}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-line/60 py-2 last:border-b-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <span className="text-right text-sm font-medium text-ink">{children}</span>
+    </div>
+  );
+}
+
+function PaymentDetail({
+  p,
+  canPay,
+  onPay,
+}: {
+  p: Payment;
+  canPay: boolean;
+  onPay: () => void;
+}) {
+  return (
+    <div className="space-y-0">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-2xl font-bold text-ink">${Number(p.amount).toFixed(2)}</p>
+          <p className="text-xs text-muted">{p.currency}</p>
+        </div>
+        <StatusPill status={p.status} label={p.status_display || p.status} />
+      </div>
+      <Row label="Purpose">{p.purpose?.replace(/_/g, ' ') || '—'}</Row>
+      <Row label="Provider">{p.provider?.replace(/_/g, ' ') || '—'}</Row>
+      {p.reference && <Row label="Reference">{p.reference}</Row>}
+      <Row label="Created">{new Date(p.created_at).toLocaleString()}</Row>
+      <Row label="Proof of payment">
+        {p.proof_of_payment_url ? (
+          <a href={p.proof_of_payment_url} target="_blank" rel="noreferrer" className="text-brand underline">
+            View file
+          </a>
+        ) : (
+          <span className="text-muted">Not yet uploaded</span>
+        )}
+      </Row>
+      {canPay && (
+        <button
+          onClick={onPay}
+          className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand"
+        >
+          <Receipt size={16} /> Pay this invoice
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DocumentDetail({ d }: { d: DocumentItem }) {
+  return (
+    <div className="space-y-0">
+      <p className="mb-3 text-base font-semibold text-ink">{d.title}</p>
+      <Row label="Kind">{d.kind === 'draft' ? 'Draft' : 'Document'}</Row>
+      <Row label="Version">v{d.version}</Row>
+      <Row label="Uploader">{d.uploader_detail?.full_name || '—'}</Row>
+      <Row label="Created">{new Date(d.created_at).toLocaleString()}</Row>
+      {d.file_url && (
+        <Row label="File">
+          <a href={d.file_url} target="_blank" rel="noreferrer" className="text-brand underline">
+            Open
+          </a>
+        </Row>
+      )}
+      {d.body && (
+        <div className="mt-3 rounded-lg border border-line bg-canvas p-3 text-xs text-ink/80">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Body</p>
+          <p className="whitespace-pre-wrap break-words">{d.body}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConsultationDetail({ c }: { c: Consultation }) {
+  return (
+    <div className="space-y-0">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-ink">
+            {new Date(c.scheduled_time).toLocaleString([], {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </p>
+          <p className="text-xs text-muted">{c.duration_minutes} min · {c.mode_display}</p>
+        </div>
+        <StatusPill status={c.status} label={c.status_display || c.status} />
+      </div>
+      {c.lawyer_detail && <Row label="Lawyer">{c.lawyer_detail.full_name}</Row>}
+      {c.client_detail && <Row label="Client">{c.client_detail.full_name}</Row>}
+      {c.practice_areas?.length > 0 && <Row label="Areas">{c.practice_areas.join(', ')}</Row>}
+      {c.price && <Row label="Price">${Number(c.price).toFixed(2)}</Row>}
+      <Row label="Payment">{c.payment_method?.replace(/_/g, ' ') || '—'}</Row>
+      {c.confirmed_at && <Row label="Confirmed">{new Date(c.confirmed_at).toLocaleString()}</Row>}
+      {c.notes && (
+        <div className="mt-3 rounded-lg border border-line bg-canvas p-3 text-xs text-ink/80">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Notes</p>
+          <p className="whitespace-pre-wrap break-words">{c.notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConsultationCard({
+  c,
+  mine,
+  grouped,
+  onClick,
+  onConfirm,
+  onReschedule,
+  isLawyer,
+}: {
+  c: Consultation;
+  mine: boolean;
+  grouped?: boolean;
+  onClick?: () => void;
+  onConfirm?: (c: Consultation) => void;
+  onReschedule?: (c: Consultation) => void;
+  isLawyer?: boolean;
+}) {
+  const when = new Date(c.scheduled_time);
+  const isPending = /pending|awaiting/i.test(c.status);
+  const canConfirm = isLawyer && isPending && c.status !== 'awaiting_payment';
+  const canReschedule = !/cancelled|completed/i.test(c.status);
+  return (
+    <TimelineCard
+      icon={CalendarDays}
+      iconTone="bg-sky-50 text-sky-700"
+      title="Consultation booked"
+      subtitle={
+        <>
+          {when.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+          {' · '}
+          {c.duration_minutes} min · {c.mode_display}
+          {c.price && ` · $${Number(c.price).toFixed(2)}`}
+        </>
+      }
+      status={c.status}
+      statusLabel={c.status_display || c.status}
+      time={c.scheduled_time}
+      mine={mine}
+      by={c.client_detail}
+      grouped={grouped}
+      onClick={onClick}
+      action={
+        <span className="flex items-center gap-1">
+          {canConfirm && onConfirm && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onConfirm(c);
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-500"
+              title="Confirm"
+            >
+              <Check size={11} /> Confirm
+            </button>
+          )}
+          {canReschedule && onReschedule && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReschedule(c);
+              }}
+              className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
+              title="Reschedule"
+            >
+              <CalendarClock size={11} /> Reschedule
+            </button>
+          )}
+        </span>
+      }
+    />
+  );
+}
+
 export default function MatterRoomPage() {
   const params = useParams<{ id: string }>();
   const matterId = Number(params.id);
-  const { me } = useApp();
+  const { me, consultations: allConsults, reloadConsultations } = useApp();
 
   const [matter, setMatter] = useState<Matter | null>(null);
   const [msgs, setMsgs] = useState<Message[]>([]);
@@ -59,6 +602,7 @@ export default function MatterRoomPage() {
   const [drawer, setDrawer] = useState<DrawerTab | null>(null);
 
   const docInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const isLawyer = me?.role === 'lawyer';
   const isClient = !!me?.role?.startsWith('client');
@@ -81,18 +625,20 @@ export default function MatterRoomPage() {
         reloadPays(),
         reloadTimes(),
         reloadReviews(),
+        reloadConsultations(),
       ]);
       setLoading(false);
     })();
-  }, [matterId, reloadMessages, reloadDocs, reloadPays, reloadTimes, reloadReviews]);
+  }, [matterId, reloadMessages, reloadDocs, reloadPays, reloadTimes, reloadReviews, reloadConsultations]);
 
   async function quickUploadDoc(file: File) {
     try {
       await documentsApi.upload(matterId, file, file.name);
       await reloadDocs();
       setDrawer('media');
+      toast.success(`${file.name} added to the matter.`, { title: 'Document uploaded' });
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : 'Upload failed.');
+      toast.error(e instanceof ApiError ? e.message : 'Upload failed.');
     }
   }
 
@@ -141,7 +687,24 @@ export default function MatterRoomPage() {
       </header>
 
       {channelId ? (
-        <MessageThread msgs={msgs} meId={me?.id} channelId={channelId} onSent={() => reloadMessages(channelId)} attachActions={attachActions} />
+        <MessageThread
+          timeline={buildTimeline(
+            msgs,
+            docs,
+            pays,
+            allConsults.filter((c) => c.matter === matterId)
+          )}
+          meId={me?.id}
+          matterClientId={matter.client?.id}
+          channelId={channelId}
+          matterId={matterId}
+          isLawyer={isLawyer}
+          isAdmin={!!me && (me.role === 'admin' || (me as any).is_staff || (me as any).is_superuser)}
+          onSent={() => reloadMessages(channelId)}
+          onPaymentChange={() => reloadPays()}
+          onConsultationChange={() => reloadConsultations()}
+          attachActions={attachActions}
+        />
       ) : (
         <p className="p-6 text-sm text-muted">No channel for this matter.</p>
       )}
@@ -182,27 +745,70 @@ export default function MatterRoomPage() {
   );
 }
 
-/* ---------------- Messages (chat bubbles + doodle bg + composer) ---------------- */
+/* ---------------- Timeline (msgs + payments + docs + consults) ---------------- */
 function MessageThread({
-  msgs,
+  timeline,
   meId,
+  matterClientId,
   channelId,
+  matterId,
+  isLawyer,
+  isAdmin,
   onSent,
+  onPaymentChange,
+  onConsultationChange,
   attachActions,
 }: {
-  msgs: Message[];
+  timeline: TimelineItem[];
   meId?: number;
+  matterClientId?: number;
   channelId: number;
+  matterId: number;
+  isLawyer: boolean;
+  isAdmin: boolean;
   onSent: () => void;
+  onPaymentChange: () => void;
+  onConsultationChange: () => void;
   attachActions: AttachAction[];
 }) {
+  const toast = useToast();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [selected, setSelected] = useState<TimelineItem | null>(null);
+  const [paying, setPaying] = useState<Payment | null>(null);
+  const [rejecting, setRejecting] = useState<Payment | null>(null);
+  const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  async function approvePayment(p: Payment) {
+    const ok = await toast.confirm({
+      title: 'Verify payment?',
+      body: `$${Number(p.amount).toFixed(2)} ${p.currency} will post to the trust ledger.`,
+      confirmLabel: 'Verify',
+    });
+    if (!ok) return;
+    try {
+      await paymentsApi.review(p.id, { status: 'verified' });
+      onPaymentChange();
+      toast.success('Payment verified — funds posted to trust ledger.', { major: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not verify.');
+    }
+  }
+
+  async function confirmConsultation(c: Consultation) {
+    try {
+      await consultationsApi.confirm(c.id);
+      onConsultationChange();
+      toast.success('Consultation confirmed — both parties notified.', { major: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not confirm.');
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [msgs]);
+  }, [timeline.length]);
 
   async function send(e: React.FormEvent) {
     e.preventDefault();
@@ -223,17 +829,71 @@ function MessageThread({
         <ChatDoodles />
         <div className="absolute inset-0 overflow-y-auto">
           <div className="relative z-10 space-y-2 px-4 py-4 sm:px-8">
-          {msgs.length === 0 && (
+          {timeline.length === 0 && (
             <p className="mx-auto mt-8 w-fit rounded-full bg-white/80 px-4 py-1.5 text-center text-xs text-muted shadow-sm">
               This is the start of your matter room — no email needed.
             </p>
           )}
-          {msgs.map((m, i) => {
+          {timeline.map((item, i) => {
+            const prev = timeline[i - 1];
+
+            if (item.kind === 'document') {
+              const uploaderId = item.d.uploader_detail?.id;
+              const mine = uploaderId != null && uploaderId === meId;
+              const grouped =
+                prev?.kind === 'document' && prev.d.uploader_detail?.id === uploaderId;
+              return (
+                <DocumentCard
+                  key={`d-${item.d.id}`}
+                  d={item.d}
+                  mine={mine}
+                  grouped={grouped}
+                  onClick={() => setSelected(item)}
+                />
+              );
+            }
+            if (item.kind === 'payment') {
+              const mine = matterClientId != null && matterClientId === meId;
+              const grouped = prev?.kind === 'payment';
+              return (
+                <PaymentCard
+                  key={`p-${item.p.id}`}
+                  p={item.p}
+                  mine={mine}
+                  by={undefined}
+                  grouped={grouped}
+                  onClick={() => setSelected(item)}
+                  onPay={(pay) => setPaying(pay)}
+                  onApprove={(pay) => approvePayment(pay)}
+                  onReject={(pay) => setRejecting(pay)}
+                  canReview={isLawyer || isAdmin}
+                />
+              );
+            }
+            if (item.kind === 'consultation') {
+              const clientId = item.c.client_detail?.id;
+              const mine = clientId != null && clientId === meId;
+              const grouped =
+                prev?.kind === 'consultation' && prev.c.client_detail?.id === clientId;
+              return (
+                <ConsultationCard
+                  key={`c-${item.c.id}`}
+                  c={item.c}
+                  mine={mine}
+                  grouped={grouped}
+                  onClick={() => setSelected(item)}
+                  onConfirm={confirmConsultation}
+                  onReschedule={(cc) => setRescheduling(cc)}
+                  isLawyer={isLawyer}
+                />
+              );
+            }
+
+            const m = item.m;
             const mine = m.sender.id === meId;
-            const prev = msgs[i - 1];
-            const grouped = prev && prev.sender.id === m.sender.id;
+            const grouped = prev && prev.kind === 'message' && prev.m.sender.id === m.sender.id;
             return (
-              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-3'}`}>
+              <div key={`m-${m.id}`} className={`flex ${mine ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-3'}`}>
                 {!mine && (
                   <div className={`mr-2 h-7 w-7 shrink-0 ${grouped ? 'invisible' : ''}`}>
                     <div className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-bold text-brand">
@@ -287,7 +947,176 @@ function MessageThread({
           </button>
         </div>
       </form>
+
+      {selected && (
+        <DetailModal
+          item={selected}
+          meId={meId}
+          matterClientId={matterClientId}
+          onClose={() => setSelected(null)}
+          onPay={(pay) => setPaying(pay)}
+        />
+      )}
+      {paying && (
+        <PayInvoiceModal
+          payment={paying}
+          onClose={() => setPaying(null)}
+          onPaid={() => {
+            onPaymentChange();
+            setPaying(null);
+            toast.success('Payment submitted — awaiting verification.', { major: true });
+          }}
+        />
+      )}
+      {rejecting && (
+        <RejectPaymentModal
+          payment={rejecting}
+          onClose={() => setRejecting(null)}
+          onDone={() => {
+            onPaymentChange();
+            setRejecting(null);
+            toast.success('Payment rejected — payer can re-upload.');
+          }}
+        />
+      )}
+      {rescheduling && (
+        <RescheduleModal
+          consultation={rescheduling}
+          onClose={() => setRescheduling(null)}
+          onDone={() => {
+            onConsultationChange();
+            setRescheduling(null);
+            toast.success('Consultation rescheduled — the other party will re-confirm.', { major: true });
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function RejectPaymentModal({
+  payment,
+  onClose,
+  onDone,
+}: {
+  payment: Payment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await paymentsApi.review(payment.id, { status: 'rejected', review_note: note.trim() });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reject.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
+          <h3 className="text-base font-bold">Reject payment</h3>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} className="space-y-3 p-5">
+          <p className="text-xs text-muted">
+            ${Number(payment.amount).toFixed(2)} {payment.currency}. The payer will be notified and can re-upload.
+          </p>
+          <label className="label">Reason (optional)</label>
+          <textarea
+            className="field"
+            rows={3}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. POP reference doesn't match the bank statement."
+          />
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+          <button
+            disabled={busy}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-500 disabled:opacity-50"
+          >
+            {busy ? 'Rejecting…' : 'Confirm rejection'}
+            {!busy && <ThumbsDown size={16} />}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RescheduleModal({
+  consultation,
+  onClose,
+  onDone,
+}: {
+  consultation: Consultation;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const initial = (() => {
+    const d = new Date(consultation.scheduled_time);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })();
+  const [when, setWhen] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!when) return;
+    setBusy(true);
+    try {
+      await consultationsApi.reschedule(consultation.id, new Date(when).toISOString());
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reschedule.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
+              <CalendarClock size={18} />
+            </span>
+            <h3 className="text-base font-bold">Reschedule consultation</h3>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} className="space-y-3 p-5">
+          <p className="text-xs text-muted">
+            Currently {new Date(consultation.scheduled_time).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}.
+            Pick a new time — the other party will need to re-confirm.
+          </p>
+          <label className="label">New time</label>
+          <input type="datetime-local" className="field" value={when} onChange={(e) => setWhen(e.target.value)} required />
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+          <button
+            disabled={busy}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Reschedule'}
+            {!busy && <Check size={16} />}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -646,6 +1475,7 @@ function fmt(secs: number) {
 }
 
 function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () => void }) {
+  const toast = useToast();
   const [running, setRunning] = useState<TimeEntry | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -669,8 +1499,9 @@ function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () =>
     setBusy(true);
     try {
       setRunning(await timeApi.start(matterId));
+      toast.success('Timer started.');
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : 'Could not start timer.');
+      toast.error(e instanceof ApiError ? e.message : 'Could not start timer.');
     } finally {
       setBusy(false);
     }
@@ -679,10 +1510,11 @@ function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () =>
     if (!running) return;
     setBusy(true);
     try {
-      await timeApi.stop(running.id);
+      const stopped = await timeApi.stop(running.id);
       setRunning(null);
       setElapsed(0);
       onChange();
+      toast.success(`Logged ${stopped.minutes}m · $${stopped.amount ?? '0.00'}.`, { title: 'Timer stopped' });
     } finally {
       setBusy(false);
     }
