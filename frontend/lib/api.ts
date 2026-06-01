@@ -203,6 +203,9 @@ export interface Transaction {
 }
 export interface LawyerProfileEdit {
   bar_number: string;
+  practising_certificate_number: string;
+  practising_certificate_expires: string | null;
+  practising_certificate_file_url: string | null;
   jurisdictions: string[];
   practice_areas: string[];
   languages: string[];
@@ -263,6 +266,9 @@ export interface Message {
   sender: MiniUser;
   content: string;
   created_at: string;
+  parent?: number | null;
+  reply_count?: number;
+  reactions?: { emoji: string; count: number; user_ids: number[] }[];
 }
 export interface DocumentItem {
   id: number;
@@ -274,6 +280,10 @@ export interface DocumentItem {
   body: string;
   version: number;
   created_at: string;
+  signed_by?: number | null;
+  signed_by_detail?: MiniUser | null;
+  signed_at?: string | null;
+  signature_data?: string;
 }
 export interface Payment {
   id: number;
@@ -446,6 +456,75 @@ export const userMe = {
   },
 };
 
+export interface ClientProfileEdit {
+  business_name: string;
+  is_business: boolean;
+  id_document_type: string;
+  id_document_number: string;
+  id_document_file_url: string | null;
+  kyc_status: string;
+  kyc_status_display: string;
+  kyc_submitted: boolean;
+}
+
+export const clientProfile = {
+  get() {
+    return api<ClientProfileEdit>('/api/v1/me/client-profile/');
+  },
+  update(form: FormData) {
+    return api<ClientProfileEdit>('/api/v1/me/client-profile/', { method: 'PATCH', body: form });
+  },
+};
+
+export interface Notif {
+  id: number;
+  kind: string;
+  title: string;
+  body: string;
+  link: string;
+  sent_email: boolean;
+  read_at: string | null;
+  created_at: string;
+}
+
+export const notifications = {
+  list() {
+    return api<Paginated<Notif>>('/api/v1/notifications/');
+  },
+  markAllRead() {
+    return api<{ detail: string }>('/api/v1/notifications/mark-all-read/', { method: 'POST' });
+  },
+  markRead(id: number) {
+    return api<Notif>(`/api/v1/notifications/${id}/mark-read/`, { method: 'POST' });
+  },
+};
+
+export const auth_invite = {
+  preview(token: string) {
+    return api<{ email: string; first_name: string; last_name: string; phone_number: string; matter_title: string }>(
+      `/api/v1/auth/accept-invite/?token=${encodeURIComponent(token)}`,
+      {},
+      { auth: false }
+    );
+  },
+  accept(payload: { token: string; email?: string; password: string }) {
+    return api<{ access: string; refresh: string }>(
+      '/api/v1/auth/accept-invite/',
+      { method: 'POST', body: JSON.stringify(payload) },
+      { auth: false }
+    );
+  },
+};
+
+export const firmAdmin = {
+  promote(firmId: number, userId: number) {
+    return api<FirmCard>(`/api/v1/firms/${firmId}/admin/`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    });
+  },
+};
+
 export const reviews = {
   forLawyer(lawyerId: number) {
     return api<Paginated<Review>>(`/api/v1/reviews/?lawyer=${lawyerId}`);
@@ -514,6 +593,11 @@ export const lawyerProfile = {
       body: JSON.stringify(payload),
     });
   },
+  uploadCertificate(file: File) {
+    const form = new FormData();
+    form.append('practising_certificate_file', file);
+    return api<LawyerProfileEdit>('/api/v1/me/lawyer-profile/', { method: 'PATCH', body: form });
+  },
 };
 
 export const lawyers = {
@@ -536,10 +620,18 @@ export const messages = {
   listForChannel(channelId: number) {
     return api<Paginated<Message>>(`/api/v1/messages/?channel=${channelId}`);
   },
-  send(channelId: number, content: string) {
-    return api<Message>('/api/v1/messages/', {
+  send(channelId: number, content: string, parent?: number) {
+    const body: any = { channel: channelId, content };
+    if (parent) body.parent = parent;
+    return api<Message>('/api/v1/messages/', { method: 'POST', body: JSON.stringify(body) });
+  },
+  replies(messageId: number) {
+    return api<Message[]>(`/api/v1/messages/${messageId}/replies/`);
+  },
+  react(messageId: number, emoji: string) {
+    return api<Message>(`/api/v1/messages/${messageId}/react/`, {
       method: 'POST',
-      body: JSON.stringify({ channel: channelId, content }),
+      body: JSON.stringify({ emoji }),
     });
   },
 };
@@ -562,6 +654,12 @@ export const documents = {
     form.append('kind', 'document');
     form.append('file', file);
     return api<DocumentItem>('/api/v1/documents/', { method: 'POST', body: form });
+  },
+  sign(documentId: number, signatureData: string) {
+    return api<DocumentItem>(`/api/v1/documents/${documentId}/sign/`, {
+      method: 'POST',
+      body: JSON.stringify({ signature_data: signatureData }),
+    });
   },
 };
 

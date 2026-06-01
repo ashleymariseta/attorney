@@ -25,6 +25,7 @@ DEBUG = env('DEBUG')
 ALLOWED_HOSTS = [host.strip() for host in env('ALLOWED_HOSTS').split(',') if host.strip()]
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -144,14 +145,19 @@ CSRF_TRUSTED_ORIGINS = [
     origin.strip() for origin in env('CSRF_TRUSTED_ORIGINS').split(',') if origin.strip()
 ]
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            'hosts': [env('REDIS_URL')],
+# Channel layer — defaults to in-memory for dev (no extra services). Set
+# CHANNEL_BACKEND=redis (and a working REDIS_URL) to scale across workers.
+if env.str('CHANNEL_BACKEND', 'memory') == 'redis':
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [env('REDIS_URL', default='redis://127.0.0.1:6379/0')]},
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
 
 # Celery
 CELERY_BROKER_URL = env('REDIS_URL')
@@ -182,3 +188,14 @@ LOGGING = {
         'level': env.str('LOG_LEVEL', 'INFO'),
     },
 }
+
+# Email — defaults to console for local development. Override with SMTP creds
+# in production via EMAIL_BACKEND, EMAIL_HOST, etc.
+EMAIL_BACKEND = env.str('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = env.str('EMAIL_HOST', '')
+EMAIL_PORT = env.int('EMAIL_PORT', 587)
+EMAIL_HOST_USER = env.str('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = env.str('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', True)
+DEFAULT_FROM_EMAIL = env.str('DEFAULT_FROM_EMAIL', 'Attorney <no-reply@attorney.local>')
+INVITE_ACCEPT_URL = env.str('INVITE_ACCEPT_URL', 'http://localhost:3000/accept-invite')

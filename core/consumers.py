@@ -1,30 +1,46 @@
+"""Matter-room websocket: clients subscribe by channel ID, receive chat events
+fanned out by the REST API (message.created, message.reaction, …)."""
+
 import json
+
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+from .models import Channel
 
-class ChatConsumer(AsyncWebsocketConsumer):
+
+class ChannelConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.matter_id = self.scope['url_route']['kwargs']['matter_id']
-        self.group_name = f'matter_{self.matter_id}'
-
+        self.channel_id = self.scope['url_route']['kwargs']['channel_id']
+        user = self.scope.get('user')
+        if not user or not getattr(user, 'is_authenticated', False):
+            await self.close(code=4401)
+            return
+        if not await self._is_member(self.channel_id, user.id):
+            await self.close(code=4403)
+            return
+        self.group_name = f'channel_{self.channel_id}'
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive(self, text_data=None, bytes_data=None):
-        if text_data is None:
+        # Clients don't push directly; the REST API broadcasts. We accept pings.
+        if not text_data:
             return
-        payload = json.loads(text_data)
-        await self.channel_layer.group_send(
-            self.group_name,
-            {
-                'type': 'chat.message',
-                'message': payload.get('message'),
-                'sender': self.scope['user'].email if self.scope['user'].is_authenticated else 'anonymous',
-            },
-        )
+        try:
+            payload = json.loads(text_data)
+        except ValueError:
+            return
+        if payload.get('type') == 'ping':
+            await self.send(text_data=json.dumps({'type': 'pong'}))
 
-    async def chat_message(self, event):
-        await self.send(text_data=json.dumps({'message': event['message'], 'sender': event['sender']}))
+    async def channel_event(self, event):
+        await self.send(text_data=json.dumps(event['payload']))
+
+    @database_sync_to_async
+    def _is_member(self, channel_id, user_id):
+        return Channel.objects.filter(pk=channel_id, members__id=user_id).exists()

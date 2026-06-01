@@ -33,6 +33,8 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
             'id',
             'firm',
             'bar_number',
+            'practising_certificate_number',
+            'practising_certificate_expires',
             'jurisdictions',
             'practice_areas',
             'languages',
@@ -267,11 +269,25 @@ class ChannelSerializer(serializers.ModelSerializer):
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = MiniUserSerializer(read_only=True)
+    reply_count = serializers.SerializerMethodField()
+    reactions = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
-        fields = '__all__'
-        read_only_fields = ['sender', 'created_at']
+        fields = ['id', 'channel', 'sender', 'parent', 'content', 'created_at', 'reply_count', 'reactions']
+        read_only_fields = ['sender', 'created_at', 'reply_count', 'reactions']
+
+    def get_reply_count(self, obj):
+        return obj.replies.count() if obj.parent_id is None else 0
+
+    def get_reactions(self, obj):
+        # Aggregate by emoji → {emoji, count, users: [user_id,...]}
+        bucket: dict = {}
+        for r in obj.reactions.all():
+            b = bucket.setdefault(r.emoji, {'emoji': r.emoji, 'count': 0, 'user_ids': []})
+            b['count'] += 1
+            b['user_ids'].append(r.user_id)
+        return list(bucket.values())
 
 
 class ConsultationSerializer(serializers.ModelSerializer):
@@ -338,15 +354,26 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
     """Lawyer-editable profile (rate, areas, bio…)."""
 
     firm_detail = serializers.SerializerMethodField()
+    practising_certificate_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = LawyerProfile
         fields = [
-            'bar_number', 'jurisdictions', 'practice_areas', 'languages',
+            'bar_number', 'practising_certificate_number', 'practising_certificate_expires',
+            'practising_certificate_file', 'practising_certificate_file_url',
+            'jurisdictions', 'practice_areas', 'languages',
             'years_experience', 'hourly_rate', 'consultation_price', 'bio',
             'firm', 'firm_detail',
         ]
-        read_only_fields = ['firm']
+        read_only_fields = ['firm', 'practising_certificate_file_url']
+        extra_kwargs = {'practising_certificate_file': {'write_only': True, 'required': False, 'allow_null': True}}
+
+    def get_practising_certificate_file_url(self, obj):
+        request = self.context.get('request')
+        if not obj.practising_certificate_file:
+            return None
+        url = obj.practising_certificate_file.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_firm_detail(self, obj):
         if obj.firm_id is None:
@@ -358,6 +385,35 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
             'website': obj.firm.website,
             'verified': obj.firm.verified,
         }
+
+
+class ClientProfileEditSerializer(serializers.ModelSerializer):
+    id_document_file_url = serializers.SerializerMethodField()
+    kyc_status_display = serializers.CharField(source='get_kyc_status_display', read_only=True)
+
+    class Meta:
+        model = ClientProfile
+        fields = [
+            'business_name', 'is_business',
+            'id_document_type', 'id_document_number', 'id_document_file',
+            'id_document_file_url', 'kyc_status', 'kyc_status_display', 'kyc_submitted',
+        ]
+        read_only_fields = ['kyc_status', 'kyc_status_display', 'kyc_submitted', 'id_document_file_url']
+        extra_kwargs = {'id_document_file': {'write_only': True, 'required': False, 'allow_null': True}}
+
+    def get_id_document_file_url(self, obj):
+        request = self.context.get('request')
+        if not obj.id_document_file:
+            return None
+        url = obj.id_document_file.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import Notification
+        model = Notification
+        fields = ['id', 'kind', 'title', 'body', 'link', 'sent_email', 'read_at', 'created_at']
 
 
 class TrustTransactionSerializer(serializers.ModelSerializer):

@@ -2,8 +2,9 @@
 
 import { Clock, Pause, Play, PenSquare, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { timeEntries as timeApi, ApiError, type Matter, type TimeEntry } from '@/lib/api';
+import { timeEntries as timeApi, ApiError, type Matter } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { setRunning as setRunningStore, useRunningTimer } from '@/lib/timerStore';
 
 function fmt(secs: number) {
   const h = Math.floor(secs / 3600);
@@ -22,15 +23,11 @@ export default function TimeTracker({
   compact?: boolean;
 }) {
   const toast = useToast();
-  const [running, setRunning] = useState<TimeEntry | null>(null);
+  const running = useRunningTimer();
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
   const [showStart, setShowStart] = useState(false);
   const [showLog, setShowLog] = useState(false);
-
-  useEffect(() => {
-    timeApi.running().then((r) => setRunning(r)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -45,7 +42,7 @@ export default function TimeTracker({
     setBusy(true);
     try {
       const r = await timeApi.start(matterId, description);
-      setRunning(r);
+      setRunningStore(r);
       setShowStart(false);
       onChange?.();
       toast.success('Timer started.', { title: r.matter_title });
@@ -61,7 +58,7 @@ export default function TimeTracker({
     setBusy(true);
     try {
       const stopped = await timeApi.stop(running.id);
-      setRunning(null);
+      setRunningStore(null);
       setElapsed(0);
       onChange?.();
       toast.success(`Logged ${stopped.minutes}m · $${stopped.amount ?? '0.00'}.`, {

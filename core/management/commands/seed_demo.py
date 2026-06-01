@@ -9,6 +9,8 @@ from core.models import (
     Firm,
     LawyerProfile,
     Matter,
+    PaymentAccount,
+    PaymentAccountType,
     Retainer,
     RetainerStatus,
     Review,
@@ -80,12 +82,28 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         firms_data = [
-            {'name': 'Dube & Partners', 'slug': 'dube-partners', 'website': 'https://dubepartners.test', 'verified': True},
-            {'name': 'Moyo Khumalo Inc.', 'slug': 'moyo-khumalo', 'website': 'https://moyokhumalo.test', 'verified': True},
+            {
+                'name': 'Dube & Partners', 'slug': 'dube-partners',
+                'website': 'https://dubepartners.test', 'verified': True,
+                'description': 'Commercial, conveyancing and notarial work across Zimbabwe & SA.',
+                'default_hourly_rate': Decimal('180.00'),
+                'default_consultation_price': Decimal('60.00'),
+            },
+            {
+                'name': 'Moyo Khumalo Inc.', 'slug': 'moyo-khumalo',
+                'website': 'https://moyokhumalo.test', 'verified': True,
+                'description': 'Labour, family and estate planning practice.',
+                'default_hourly_rate': Decimal('150.00'),
+                'default_consultation_price': Decimal('50.00'),
+            },
         ]
         firms = []
         for f in firms_data:
-            firm, _ = Firm.objects.get_or_create(slug=f['slug'], defaults=f)
+            firm, created = Firm.objects.get_or_create(slug=f['slug'], defaults=f)
+            if not created:
+                for k, v in f.items():
+                    setattr(firm, k, v)
+                firm.save()
             firms.append(firm)
         self.stdout.write(self.style.SUCCESS(f'Seeded {len(firms)} firms.'))
 
@@ -114,8 +132,48 @@ class Command(BaseCommand):
             profile.verified_at = timezone.now()
             # First two lawyers join firm #1, next two firm #2.
             profile.firm = firms[0] if len(created_lawyers) < 2 else firms[1]
+            profile.practising_certificate_number = f'PC-2026-{1000 + len(created_lawyers):04d}'
+            profile.practising_certificate_expires = timezone.now().date().replace(year=timezone.now().year + 1)
             profile.save()
             created_lawyers.append(user)
+
+            # Seed two payment accounts per lawyer.
+            PaymentAccount.objects.get_or_create(
+                owner_user=user, account_type=PaymentAccountType.ECOCASH,
+                defaults={
+                    'identifier': f'+263 77 0000 {len(created_lawyers):03d}',
+                    'account_name': f'{user.first_name} {user.last_name}'.strip(),
+                },
+            )
+            PaymentAccount.objects.get_or_create(
+                owner_user=user, account_type=PaymentAccountType.BANK,
+                defaults={
+                    'identifier': f'0123456789-{len(created_lawyers)}',
+                    'account_name': f'{user.first_name} {user.last_name}'.strip(),
+                    'bank_name': 'CABS' if len(created_lawyers) % 2 else 'Stanbic',
+                    'branch': 'Main Branch',
+                },
+            )
+
+        # Anoint the first lawyer in each firm as that firm's admin.
+        if created_lawyers:
+            firms[0].admin = created_lawyers[0]
+            firms[0].save(update_fields=['admin'])
+            if len(created_lawyers) > 2:
+                firms[1].admin = created_lawyers[2]
+                firms[1].save(update_fields=['admin'])
+
+        # Firm-wide bank account on Dube & Partners.
+        PaymentAccount.objects.get_or_create(
+            owner_firm=firms[0], account_type=PaymentAccountType.BANK,
+            defaults={
+                'identifier': '9876543210',
+                'account_name': 'Dube & Partners — Trust',
+                'bank_name': 'Stanbic',
+                'branch': 'Sam Levy',
+                'notes': 'Firm trust account.',
+            },
+        )
         self.stdout.write(self.style.SUCCESS(f'Seeded {len(created_lawyers)} lawyers.'))
 
         client, created = User.objects.get_or_create(

@@ -29,7 +29,10 @@ from .models import (
     Firm,
     LawyerProfile,
     Matter,
+    MatterInvite,
     Message,
+    Notification,
+    NotificationKind,
     PaymentAccount,
     PaymentMethod,
     Retainer,
@@ -39,6 +42,9 @@ from .models import (
     TrustTransaction,
     UserRole,
 )
+from .notify import notify
+from django.conf import settings as dj_settings
+import secrets
 from .permissions import IsAdminOrSelf
 from .serializers import (
     ChannelSerializer,
@@ -134,6 +140,7 @@ class MyLawyerProfileView(APIView):
 
     permission_classes = [IsAuthenticated]
     serializer_class = LawyerProfileEditSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def _profile(self, request):
         if not _is_lawyer(request.user):
@@ -142,14 +149,51 @@ class MyLawyerProfileView(APIView):
         return profile
 
     def get(self, request):
-        return Response(LawyerProfileEditSerializer(self._profile(request)).data)
+        return Response(LawyerProfileEditSerializer(self._profile(request), context={'request': request}).data)
 
     def patch(self, request):
         profile = self._profile(request)
-        serializer = LawyerProfileEditSerializer(profile, data=request.data, partial=True)
+        serializer = LawyerProfileEditSerializer(profile, data=request.data, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        # When a lawyer joins a firm and has no rate, inherit firm defaults.
+        if profile.firm_id and (profile.hourly_rate is None or profile.consultation_price is None):
+            firm = profile.firm
+            if profile.hourly_rate is None and firm.default_hourly_rate is not None:
+                profile.hourly_rate = firm.default_hourly_rate
+            if profile.consultation_price is None and firm.default_consultation_price is not None:
+                profile.consultation_price = firm.default_consultation_price
+            profile.save(update_fields=['hourly_rate', 'consultation_price'])
+        return Response(LawyerProfileEditSerializer(profile, context={'request': request}).data)
+
+
+class MyClientProfileView(APIView):
+    """The client's own profile + KYC docs."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def _profile(self, request):
+        if not (request.user.role or '').startswith('client'):
+            raise PermissionDenied('Only clients have a client profile.')
+        profile, _ = ClientProfile.objects.get_or_create(user=request.user)
+        return profile
+
+    def get(self, request):
+        from .serializers import ClientProfileEditSerializer
+        return Response(ClientProfileEditSerializer(self._profile(request), context={'request': request}).data)
+
+    def patch(self, request):
+        from .serializers import ClientProfileEditSerializer
+        profile = self._profile(request)
+        s = ClientProfileEditSerializer(profile, data=request.data, partial=True, context={'request': request})
+        s.is_valid(raise_exception=True)
+        # If they uploaded ID docs, flip status to pending.
+        if 'id_document_file' in request.data or 'id_document_number' in request.data:
+            s.save(kyc_status='pending', kyc_submitted=True)
+        else:
+            s.save()
+        return Response(s.data)
 
 
 class FirmViewSet(viewsets.ModelViewSet):
@@ -176,20 +220,29 @@ class PaymentAccountViewSet(viewsets.ModelViewSet):
     queryset = PaymentAccount.objects.none()
     filterset_fields = ['account_type', 'owner_user', 'owner_firm']
 
+    def _writable_qs(self, user):
+        admin_firm_ids = list(Firm.objects.filter(admin=user).values_list('id', flat=True))
+        return PaymentAccount.objects.filter(
+            Q(owner_user=user) | Q(owner_firm_id__in=admin_firm_ids)
+        )
+
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return PaymentAccount.objects.none()
         user = self.request.user
+        # Mutations always go through the writable set the user owns/admins.
+        if self.action in {'update', 'partial_update', 'destroy'}:
+            return self._writable_qs(user)
         qs = PaymentAccount.objects.filter(is_active=True).order_by('account_type')
         scope = self.request.query_params.get('scope')
         matter_id = self.request.query_params.get('matter')
         if scope == 'mine':
-            return qs.filter(owner_user=user)
+            admin_firm_ids = list(Firm.objects.filter(admin=user).values_list('id', flat=True))
+            return qs.filter(Q(owner_user=user) | Q(owner_firm_id__in=admin_firm_ids))
         if matter_id:
             matter = Matter.objects.filter(pk=matter_id).first()
             if matter is None:
                 return qs.none()
-            # Only matter participants can see the lawyer's accounts.
             if matter.client_id != user.id and not matter.lawyers.filter(pk=user.pk).exists() and not _is_platform_admin(user):
                 return qs.none()
             lawyer_ids = list(matter.lawyers.values_list('id', flat=True))
@@ -198,24 +251,18 @@ class PaymentAccountViewSet(viewsets.ModelViewSet):
                 .values_list('firm_id', flat=True)
             )
             return qs.filter(Q(owner_user_id__in=lawyer_ids) | Q(owner_firm_id__in=firm_ids))
-        # Default: just the user's own accounts.
         return qs.filter(owner_user=user)
 
     def perform_create(self, serializer):
-        serializer.save(owner_user=self.request.user)
-
-    def perform_update(self, serializer):
-        instance = serializer.instance
         user = self.request.user
-        if instance.owner_user_id and instance.owner_user_id != user.id and not _is_platform_admin(user):
-            raise PermissionDenied('Not your account.')
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        user = self.request.user
-        if instance.owner_user_id and instance.owner_user_id != user.id and not _is_platform_admin(user):
-            raise PermissionDenied('Not your account.')
-        instance.delete()
+        firm_id = self.request.data.get('owner_firm')
+        if firm_id:
+            firm = Firm.objects.filter(pk=firm_id).first()
+            if firm is None or firm.admin_id != user.id:
+                raise PermissionDenied('Only the firm admin can add firm payment accounts.')
+            serializer.save(owner_user=None, owner_firm=firm)
+        else:
+            serializer.save(owner_user=user, owner_firm=None)
 
 
 class JoinFirmView(APIView):
@@ -238,7 +285,11 @@ class JoinFirmView(APIView):
         if firm is None:
             raise ValidationError('Firm not found.')
         profile.firm = firm
-        profile.save(update_fields=['firm'])
+        if profile.hourly_rate is None and firm.default_hourly_rate is not None:
+            profile.hourly_rate = firm.default_hourly_rate
+        if profile.consultation_price is None and firm.default_consultation_price is not None:
+            profile.consultation_price = firm.default_consultation_price
+        profile.save()
         return Response(FirmCardSerializer(firm).data)
 
     def delete(self, request):
@@ -290,16 +341,14 @@ class MatterViewSet(viewsets.ModelViewSet):
         user = self.request.user
         base = Matter.objects.prefetch_related('lawyers', 'channels').select_related('client')
         if _is_platform_admin(user):
-            return base.all()
+            return base.order_by('-created_at')
         scope = Q(client=user) | Q(lawyers=user)
-        # If this lawyer is in a firm, also surface any matter assigned to a
-        # lawyer of the same firm — gives the firm shared oversight.
         if _is_lawyer(user):
             profile = getattr(user, 'lawyer_profile', None)
             firm_id = getattr(profile, 'firm_id', None)
             if firm_id:
                 scope |= Q(lawyers__lawyer_profile__firm_id=firm_id)
-        return base.filter(scope).distinct()
+        return base.filter(scope).order_by('-created_at').distinct()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -442,11 +491,6 @@ class MatterViewSet(viewsets.ModelViewSet):
                 client.save(update_fields=['password'])
                 ClientProfile.objects.get_or_create(user=client)
                 invited = True
-                # Notification stub — wire up email/SMS provider later.
-                print(
-                    f'[INVITE] {request.user.get_full_name() or request.user.email} '
-                    f'invited {client.email} (phone={phone or "—"}) to matter "{title}".'
-                )
 
         matter = Matter.objects.create(
             title=title,
@@ -462,6 +506,37 @@ class MatterViewSet(viewsets.ModelViewSet):
 
         channel = Channel.objects.create(channel_type='matter', matter=matter, name=title)
         channel.members.add(request.user, client)
+
+        lawyer_label = request.user.get_full_name() or request.user.email
+        if invited:
+            token = secrets.token_urlsafe(32)
+            MatterInvite.objects.create(
+                user=client,
+                matter=matter,
+                invited_by=request.user,
+                token=token,
+                sent_to_email=client.email if '@invite.attorney.local' not in client.email else '',
+                sent_to_phone=getattr(client, 'phone_number', '') or '',
+            )
+            accept_url = f"{dj_settings.INVITE_ACCEPT_URL}?token={token}"
+            notify(
+                recipient=client,
+                kind=NotificationKind.INVITE,
+                title=f'{lawyer_label} invited you to a matter',
+                body=(
+                    f'{lawyer_label} opened a matter for you: "{title}".\n\n'
+                    f'Set a password and join the room: {accept_url}'
+                ),
+                link=accept_url,
+            )
+        else:
+            notify(
+                recipient=client,
+                kind=NotificationKind.GENERIC,
+                title=f'{lawyer_label} opened a new matter for you',
+                body=f'"{title}" is now open in your workspace.',
+                link=f'/matters/{matter.id}',
+            )
 
         body = MatterSerializer(matter, context=self.get_serializer_context()).data
         body['invited'] = invited
@@ -487,23 +562,82 @@ class ChannelViewSet(viewsets.ModelViewSet):
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
-    filterset_fields = ['channel']
+    filterset_fields = ['channel', 'parent']
     queryset = Message.objects.none()
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Message.objects.none()
         user = self.request.user
-        qs = Message.objects.select_related('sender', 'channel').order_by('created_at')
+        qs = (
+            Message.objects.select_related('sender', 'channel')
+            .prefetch_related('reactions', 'replies')
+            .order_by('created_at')
+        )
         if _is_platform_admin(user):
-            return qs
-        return qs.filter(channel__members=user).distinct()
+            qs = qs
+        else:
+            qs = qs.filter(channel__members=user).distinct()
+        # By default only return top-level messages so the chat thread isn't
+        # cluttered with thread replies. Pass ?include_replies=1 to override.
+        include_replies = self.request.query_params.get('include_replies')
+        parent_qp = self.request.query_params.get('parent')
+        if not include_replies and parent_qp is None:
+            qs = qs.filter(parent__isnull=True)
+        return qs
 
     def perform_create(self, serializer):
         channel = serializer.validated_data['channel']
         if not channel.members.filter(pk=self.request.user.pk).exists():
             raise PermissionDenied('You are not a member of this channel.')
-        serializer.save(sender=self.request.user)
+        msg = serializer.save(sender=self.request.user)
+        _broadcast_channel(channel.id, {'kind': 'message.created', 'message': MessageSerializer(msg).data})
+
+    @action(detail=True, methods=['get'])
+    def replies(self, request, pk=None):
+        parent = self.get_object()
+        qs = parent.replies.select_related('sender').prefetch_related('reactions').order_by('created_at')
+        return Response(MessageSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['post'])
+    def react(self, request, pk=None):
+        from .models import MessageReaction
+        message = self.get_object()
+        if not message.channel.members.filter(pk=request.user.pk).exists():
+            raise PermissionDenied('Not a channel member.')
+        emoji = (request.data.get('emoji') or '').strip()
+        if not emoji:
+            raise ValidationError('emoji is required.')
+        existing = MessageReaction.objects.filter(message=message, user=request.user, emoji=emoji).first()
+        if existing:
+            existing.delete()
+            toggled = 'removed'
+        else:
+            MessageReaction.objects.create(message=message, user=request.user, emoji=emoji)
+            toggled = 'added'
+        data = MessageSerializer(message).data
+        _broadcast_channel(
+            message.channel_id,
+            {'kind': 'message.reaction', 'message_id': message.id, 'reactions': data['reactions'], 'toggled': toggled},
+        )
+        return Response(data)
+
+
+def _broadcast_channel(channel_id, payload):
+    """Fan out a chat event over the WebSocket group for this channel."""
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        layer = get_channel_layer()
+        if layer is None:
+            return
+        async_to_sync(layer.group_send)(
+            f'channel_{channel_id}',
+            {'type': 'channel.event', 'payload': payload},
+        )
+    except Exception:
+        pass
 
 
 class ConsultationViewSet(viewsets.ModelViewSet):
@@ -613,6 +747,27 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploader=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def sign(self, request, pk=None):
+        doc = self.get_object()
+        if doc.signed_at is not None:
+            raise ValidationError('Document already signed.')
+        signature_data = request.data.get('signature_data', '')
+        doc.signed_by = request.user
+        doc.signed_at = timezone.now()
+        doc.signature_data = signature_data
+        doc.save(update_fields=['signed_by', 'signed_at', 'signature_data'])
+        # Notify the uploader if it's not the signer.
+        if doc.uploader_id and doc.uploader_id != request.user.id:
+            notify(
+                recipient=doc.uploader,
+                kind=NotificationKind.DOCUMENT,
+                title=f'{request.user.get_full_name() or request.user.email} signed "{doc.title}"',
+                body='The signature has been recorded against the matter.',
+                link=f'/matters/{doc.matter_id}',
+            )
+        return Response(self.get_serializer(doc).data)
 
 
 class ReviewViewSet(viewsets.ModelViewSet):
@@ -836,3 +991,116 @@ class LogoutView(APIView):
         except TokenError:
             return Response({'detail': 'Invalid or expired refresh token.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_205_RESET_CONTENT)
+
+
+class AcceptInviteView(APIView):
+    """Public endpoint — exchange an invite token + password for auth tokens."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        token = request.query_params.get('token', '')
+        invite = MatterInvite.objects.filter(token=token, accepted_at__isnull=True).first()
+        if not invite:
+            return Response({'detail': 'Invalid or expired invite.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'email': invite.user.email if '@invite.attorney.local' not in invite.user.email else '',
+            'first_name': invite.user.first_name,
+            'last_name': invite.user.last_name,
+            'phone_number': invite.user.phone_number,
+            'matter_title': invite.matter.title,
+        })
+
+    def post(self, request):
+        token = request.data.get('token', '')
+        password = request.data.get('password', '')
+        email = (request.data.get('email') or '').strip().lower()
+        invite = MatterInvite.objects.filter(token=token, accepted_at__isnull=True).first()
+        if not invite:
+            raise ValidationError('Invalid or expired invite.')
+        if not password or len(password) < 8:
+            raise ValidationError('Password must be at least 8 characters.')
+        user = invite.user
+        if email and '@invite.attorney.local' in user.email and not User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
+            user.email = email
+        user.set_password(password)
+        user.is_verified = True
+        user.save()
+        invite.accepted_at = timezone.now()
+        invite.save(update_fields=['accepted_at'])
+        # Issue tokens so the FE can log them in straight away.
+        refresh = RefreshToken.for_user(user)
+        return Response({'access': str(refresh.access_token), 'refresh': str(refresh)})
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """In-app notifications for the current user."""
+
+    permission_classes = [IsAuthenticated]
+    queryset = Notification.objects.none()
+
+    def get_serializer_class(self):
+        from .serializers import NotificationSerializer
+        return NotificationSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Notification.objects.none()
+        return Notification.objects.filter(recipient=self.request.user).order_by('-created_at')
+
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        Notification.objects.filter(recipient=request.user, read_at__isnull=True).update(read_at=timezone.now())
+        return Response({'detail': 'OK'})
+
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        n = self.get_object()
+        if n.read_at is None:
+            n.read_at = timezone.now()
+            n.save(update_fields=['read_at'])
+        return Response(self.get_serializer(n).data)
+
+
+class PromoteFirmAdminView(APIView):
+    """Make a lawyer the admin of a firm. First-admin-wins for unclaimed firms."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        firm = Firm.objects.filter(pk=pk).first()
+        if firm is None:
+            raise ValidationError('Firm not found.')
+        target_id = request.data.get('user_id')
+        if not target_id:
+            raise ValidationError('user_id is required.')
+        target = User.objects.filter(pk=target_id).first()
+        if target is None:
+            raise ValidationError('User not found.')
+        # Target must be a lawyer in this firm.
+        target_profile = getattr(target, 'lawyer_profile', None)
+        if not target_profile or target_profile.firm_id != firm.id:
+            raise ValidationError('That lawyer is not a member of this firm.')
+        # Current user must be: admin of the firm, or platform admin, or — if
+        # the firm has no admin yet — a member of the firm claiming the role.
+        is_admin = _is_platform_admin(request.user)
+        is_current_firm_admin = firm.admin_id == request.user.id
+        my_profile = getattr(request.user, 'lawyer_profile', None)
+        can_claim_unclaimed = (
+            firm.admin_id is None
+            and my_profile
+            and my_profile.firm_id == firm.id
+        )
+        if not (is_admin or is_current_firm_admin or can_claim_unclaimed):
+            raise PermissionDenied('Only the current firm admin can transfer admin.')
+        firm.admin = target
+        firm.save(update_fields=['admin'])
+        notify(
+            recipient=target,
+            kind=NotificationKind.GENERIC,
+            title=f'You are now an admin of {firm.name}',
+            body='You can now manage firm details, default rates and firm-wide payment accounts.',
+            link='/settings',
+        )
+        return Response(FirmCardSerializer(firm).data)

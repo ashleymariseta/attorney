@@ -4,12 +4,21 @@ import { useEffect, useRef, useState } from 'react';
 import {
   BadgeCheck,
   Banknote,
+  Briefcase,
   Building2,
   Camera,
+  Coins,
   CreditCard,
+  FileText,
+  Globe2,
+  GraduationCap,
+  Languages,
   Landmark,
+  MapPin,
   Pencil,
   Plus,
+  Receipt,
+  ScrollText,
   Smartphone,
   Trash2,
   User as UserIcon,
@@ -20,12 +29,17 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  clientProfile,
+  firmAdmin,
   firms as firmsApi,
   lawyerProfile,
+  lawyers as lawyersApi,
   paymentAccounts as accountsApi,
   userMe,
   ApiError,
+  type ClientProfileEdit,
   type FirmCard,
+  type Lawyer,
   type LawyerProfileEdit,
   type PaymentAccount,
 } from '@/lib/api';
@@ -47,8 +61,9 @@ function iconForType(t: string): LucideIcon {
 
 export default function SettingsPage() {
   const toast = useToast();
-  const { me } = useApp();
+  const { me, reloadMe } = useApp();
   const isLawyer = me?.role === 'lawyer';
+  const isClient = !!me?.role?.startsWith('client');
 
   const [form, setForm] = useState<LawyerProfileEdit | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -63,9 +78,12 @@ export default function SettingsPage() {
   const [firmBusy, setFirmBusy] = useState(false);
   const [firmEdit, setFirmEdit] = useState<Partial<FirmCard> | null>(null);
   const [firmDetail, setFirmDetail] = useState<FirmCard | null>(null);
+  const [firmMembers, setFirmMembers] = useState<Lawyer[]>([]);
 
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [acctModal, setAcctModal] = useState<{ mode: 'create' | 'edit'; record?: PaymentAccount } | null>(null);
+
+  const [tab, setTab] = useState<'profile' | 'kyc' | 'rates' | 'payments' | 'firm'>('profile');
 
   useEffect(() => {
     if (!isLawyer) return;
@@ -77,10 +95,43 @@ export default function SettingsPage() {
   useEffect(() => {
     if (form?.firm) {
       firmsApi.get(form.firm).then(setFirmDetail).catch(() => setFirmDetail(null));
+      lawyersApi
+        .list()
+        .then((r) => setFirmMembers(r.results.filter((l) => (l.profile as any)?.firm === form.firm)))
+        .catch(() => setFirmMembers([]));
     } else {
       setFirmDetail(null);
+      setFirmMembers([]);
     }
   }, [form?.firm]);
+
+  async function promoteToAdmin(userId: number) {
+    if (!firmDetail) return;
+    const ok = await toast.confirm({
+      title: 'Make this lawyer the firm admin?',
+      body: 'They will be able to edit firm details, rates and firm-wide payment accounts. You will keep all member privileges.',
+      confirmLabel: 'Promote',
+    });
+    if (!ok) return;
+    try {
+      const updated = await firmAdmin.promote(firmDetail.id, userId);
+      setFirmDetail(updated);
+      toast.success('Admin role transferred.', { major: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not transfer admin.');
+    }
+  }
+
+  async function claimAdmin() {
+    if (!firmDetail || !me) return;
+    try {
+      const updated = await firmAdmin.promote(firmDetail.id, me.id);
+      setFirmDetail(updated);
+      toast.success(`You are now an admin of ${updated.name}.`, { major: true });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not claim admin role.');
+    }
+  }
 
   useEffect(() => setAvatarUrl(me?.avatar_url ?? null), [me?.avatar_url]);
 
@@ -91,6 +142,7 @@ export default function SettingsPage() {
     try {
       const updated = await userMe.uploadAvatar(file);
       setAvatarUrl(updated.avatar_url ?? null);
+      await reloadMe();
       toast.success('Profile picture updated.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Upload failed.');
@@ -107,6 +159,7 @@ export default function SettingsPage() {
     try {
       const updated = await userMe.removeAvatar();
       setAvatarUrl(updated.avatar_url ?? null);
+      await reloadMe();
       toast.success('Profile picture removed.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not remove.');
@@ -179,10 +232,13 @@ export default function SettingsPage() {
     }
   }
 
+  if (isClient) {
+    return <ClientSettings reloadMe={reloadMe} />;
+  }
   if (!isLawyer) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <p className="text-sm text-muted">Settings are available for lawyer accounts.</p>
+        <p className="text-sm text-muted">Settings are available for lawyer and client accounts.</p>
       </div>
     );
   }
@@ -208,6 +264,8 @@ export default function SettingsPage() {
         years_experience: form.years_experience,
         bio: form.bio,
         bar_number: form.bar_number,
+        practising_certificate_number: form.practising_certificate_number,
+        practising_certificate_expires: form.practising_certificate_expires || null,
       });
       setForm(updated);
       setSavedAt(Date.now());
@@ -224,12 +282,59 @@ export default function SettingsPage() {
   const parse = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
   const isFirmAdmin = !!firmDetail && me && firmDetail.admin === me.id;
 
-  return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-bold">Settings</h1>
-      <p className="text-sm text-muted">Profile, rates, firm, and where clients pay you.</p>
+  const tabs = [
+    { key: 'profile', label: 'Profile', icon: UserIcon },
+    { key: 'kyc', label: 'KYC', icon: ScrollText },
+    { key: 'rates', label: 'Rates', icon: Coins },
+    { key: 'payments', label: 'Payments', icon: Wallet },
+    { key: 'firm', label: 'Firm', icon: Building2 },
+  ] as const;
 
-      {/* PROFILE */}
+  function formSaveBar() {
+    return (
+      <div className="mt-5 flex items-center justify-end gap-3 border-t border-line pt-4">
+        {savedAt && <span className="text-xs font-semibold text-emerald-600">✓ Saved</span>}
+        {error && <span className="text-xs font-semibold text-red-600">{error}</span>}
+        <button type="submit" disabled={busy} className="btn-primary">
+          {busy ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+      <div className="flex items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-light/15 text-brand-dark">
+          <UserIcon size={18} />
+        </span>
+        <div>
+          <h1 className="text-2xl font-bold">Settings</h1>
+          <p className="text-sm text-muted">Profile, KYC, rates, payments and firm.</p>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div className="mt-6 flex gap-1 overflow-x-auto border-b border-line">
+        {tabs.map((t) => {
+          const active = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+                active ? 'border-brand-dark text-brand-dark' : 'border-transparent text-muted hover:text-ink'
+              }`}
+            >
+              <t.icon size={14} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* PROFILE TAB */}
+      {tab === 'profile' && (
       <form onSubmit={saveProfile} className="mt-6 space-y-5">
         <div className="card space-y-4">
           <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
@@ -301,35 +406,97 @@ export default function SettingsPage() {
             <label className="label">Bio</label>
             <textarea className="field" rows={3} value={form.bio} onChange={(e) => set('bio', e.target.value)} />
           </div>
-        </div>
-
-        {/* RATES */}
-        <div className="card space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Your rate</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Hourly rate (USD)</label>
-              <input className="field" type="number" min="0" step="1" value={form.hourly_rate ?? ''}
-                onChange={(e) => set('hourly_rate', e.target.value)} />
-              <p className="mt-1 text-xs text-muted">Bookings are priced as rate × minutes.</p>
-            </div>
-            <div>
-              <label className="label">Consultation base (USD)</label>
-              <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
-                onChange={(e) => set('consultation_price', e.target.value)} />
-            </div>
-          </div>
-        </div>
-
-        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-        <div className="flex items-center gap-3">
-          <button className="btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
-          {savedAt && <span className="text-sm text-brand">✓ Saved</span>}
+          {formSaveBar()}
         </div>
       </form>
+      )}
 
-      {/* PAYMENT ACCOUNTS */}
-      <div className="mt-8 card space-y-4">
+      {/* KYC TAB */}
+      {tab === 'kyc' && (
+      <form onSubmit={saveProfile} className="mt-6 space-y-5">
+        <div className="card space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+              <ScrollText size={14} /> Practising certificate
+            </h2>
+            {form.practising_certificate_number && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/15 px-2.5 py-0.5 text-[11px] font-semibold text-brand-dark">
+                <BadgeCheck size={12} /> On file
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted">
+            Required for KYC. Your certificate is checked against the bar registry — make sure both fields are accurate.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Certificate number</label>
+              <input
+                className="field"
+                value={form.practising_certificate_number}
+                onChange={(e) => set('practising_certificate_number', e.target.value)}
+                placeholder="e.g. PC-2026-0184"
+              />
+            </div>
+            <div>
+              <label className="label">Expires on</label>
+              <input
+                className="field"
+                type="date"
+                value={form.practising_certificate_expires ?? ''}
+                onChange={(e) => set('practising_certificate_expires', e.target.value || null)}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="label">Certificate file</label>
+            <CertificateFileUpload
+              currentUrl={form.practising_certificate_file_url}
+              onUploaded={(updated) => setForm(updated)}
+              toast={toast}
+            />
+          </div>
+          {formSaveBar()}
+        </div>
+      </form>
+      )}
+
+      {/* RATES TAB */}
+      {tab === 'rates' && (
+      <form onSubmit={saveProfile} className="mt-6 space-y-5">
+        <div className="card space-y-4">
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+            <Coins size={14} /> Your rates
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <RateField icon={Receipt} label="Hourly rate (USD)" hint="Bookings are priced as rate × minutes.">
+              <input className="field" type="number" min="0" step="1" value={form.hourly_rate ?? ''}
+                onChange={(e) => set('hourly_rate', e.target.value)} />
+            </RateField>
+            <RateField icon={Briefcase} label="Consultation base (USD)" hint="Charged per consultation booking.">
+              <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
+                onChange={(e) => set('consultation_price', e.target.value)} />
+            </RateField>
+          </div>
+          {firmDetail && (firmDetail.default_hourly_rate || firmDetail.default_consultation_price) && (
+            <div className="rounded-lg border border-brand-light/30 bg-brand-light/5 p-3 text-xs">
+              <p className="flex items-center gap-1.5 font-semibold text-brand-dark">
+                <Building2 size={12} /> Firm defaults
+              </p>
+              <p className="mt-1 text-muted">
+                {firmDetail.name} suggests {firmDetail.default_hourly_rate ? `$${firmDetail.default_hourly_rate}/hr` : '—'}{' '}
+                · {firmDetail.default_consultation_price ? `$${firmDetail.default_consultation_price} per consult` : '—'}.
+              </p>
+            </div>
+          )}
+          {formSaveBar()}
+        </div>
+      </form>
+      )}
+
+      {/* PAYMENT ACCOUNTS TAB */}
+      {tab === 'payments' && (
+      <div className="mt-6 card space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
             <Wallet size={14} /> Payment accounts
@@ -395,9 +562,11 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+      )}
 
-      {/* LAW FIRM */}
-      <div className="mt-8 card space-y-4">
+      {/* FIRM TAB */}
+      {tab === 'firm' && (
+      <div className="mt-6 card space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
             <Building2 size={14} /> Law firm
@@ -498,6 +667,53 @@ export default function SettingsPage() {
               </div>
             )}
 
+            {/* Members + admin promotion */}
+            <div className="mt-4 rounded-lg border border-line bg-canvas/40 p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Members</p>
+                {firmDetail.admin == null && (
+                  <button
+                    onClick={claimAdmin}
+                    className="rounded-md bg-brand-dark px-2 py-1 text-[11px] font-semibold text-white hover:bg-brand"
+                  >
+                    Claim admin
+                  </button>
+                )}
+              </div>
+              {firmMembers.length === 0 ? (
+                <p className="mt-2 text-xs text-muted">Just you so far.</p>
+              ) : (
+                <ul className="mt-2 divide-y divide-line/60">
+                  {firmMembers.map((m) => {
+                    const isAdminMember = firmDetail.admin === m.id;
+                    return (
+                      <li key={m.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-ink">{m.full_name}</p>
+                          <p className="truncate text-[10px] text-muted">{m.email}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isAdminMember && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/15 px-2 py-0.5 text-[10px] font-semibold text-brand-dark">
+                              <BadgeCheck size={10} /> Admin
+                            </span>
+                          )}
+                          {isFirmAdmin && !isAdminMember && (
+                            <button
+                              onClick={() => promoteToAdmin(m.id)}
+                              className="rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
+                            >
+                              Make admin
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={leaveFirm}
@@ -535,6 +751,7 @@ export default function SettingsPage() {
           </>
         )}
       </div>
+      )}
 
       {acctModal && (
         <PaymentAccountModal
@@ -683,6 +900,260 @@ function PaymentAccountModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+
+function CertificateFileUpload({
+  currentUrl,
+  onUploaded,
+  toast,
+}: {
+  currentUrl: string | null;
+  onUploaded: (p: LawyerProfileEdit) => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      const updated = await lawyerProfile.uploadCertificate(file);
+      onUploaded(updated);
+      toast.success('Certificate uploaded.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Upload failed.');
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-dashed border-line bg-white px-3 py-3 text-sm">
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+        className="rounded-md bg-brand-dark px-3 py-1 text-xs font-semibold text-white hover:bg-brand disabled:opacity-50"
+      >
+        {busy ? 'Uploading…' : currentUrl ? 'Replace file' : 'Upload PDF / image'}
+      </button>
+      {currentUrl ? (
+        <a href={currentUrl} target="_blank" rel="noreferrer" className="truncate text-xs text-brand hover:underline">
+          View current certificate
+        </a>
+      ) : (
+        <span className="text-xs text-muted">No file uploaded yet.</span>
+      )}
+      <input ref={fileRef} type="file" accept=".pdf,image/*" className="hidden" onChange={onPick} />
+    </div>
+  );
+}
+
+function ClientSettings({ reloadMe }: { reloadMe: () => Promise<void> }) {
+  const toast = useToast();
+  const { me } = useApp();
+  const [profile, setProfile] = useState<ClientProfileEdit | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(me?.avatar_url ?? null);
+  const [busy, setBusy] = useState(false);
+  const avatarRef = useRef<HTMLInputElement>(null);
+  const idFileRef = useRef<HTMLInputElement>(null);
+  const [businessName, setBusinessName] = useState('');
+  const [isBusiness, setIsBusiness] = useState(false);
+  const [idType, setIdType] = useState('national_id');
+  const [idNumber, setIdNumber] = useState('');
+
+  useEffect(() => {
+    clientProfile.get().then((p) => {
+      setProfile(p);
+      setBusinessName(p.business_name);
+      setIsBusiness(p.is_business);
+      setIdType(p.id_document_type || 'national_id');
+      setIdNumber(p.id_document_number);
+    });
+  }, []);
+  useEffect(() => setAvatarUrl(me?.avatar_url ?? null), [me?.avatar_url]);
+
+  async function saveProfile() {
+    setBusy(true);
+    const form = new FormData();
+    form.append('business_name', businessName);
+    form.append('is_business', isBusiness ? 'true' : 'false');
+    form.append('id_document_type', idType);
+    form.append('id_document_number', idNumber);
+    const file = idFileRef.current?.files?.[0];
+    if (file) form.append('id_document_file', file);
+    try {
+      const p = await clientProfile.update(form);
+      setProfile(p);
+      if (idFileRef.current) idFileRef.current.value = '';
+      toast.success(file ? 'KYC submitted — awaiting review.' : 'Profile saved.', { major: !!file });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const updated = await userMe.uploadAvatar(file);
+      setAvatarUrl(updated.avatar_url ?? null);
+      await reloadMe();
+      toast.success('Profile picture updated.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Upload failed.');
+    }
+  }
+
+  if (!profile) return <p className="p-8 text-sm text-muted">Loading…</p>;
+
+  const kycTone =
+    profile.kyc_status === 'verified'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+      : profile.kyc_status === 'pending'
+      ? 'bg-amber-50 text-amber-800 ring-amber-200'
+      : profile.kyc_status === 'rejected'
+      ? 'bg-red-50 text-red-700 ring-red-200'
+      : 'bg-line/60 text-muted ring-line';
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <h1 className="text-2xl font-bold">Settings</h1>
+      <p className="text-sm text-muted">Profile and KYC.</p>
+
+      <div className="mt-6 card space-y-4">
+        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+          <UserIcon size={14} /> Profile
+        </h2>
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full border border-line bg-canvas text-2xl font-bold text-brand-dark">
+              {avatarUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span>{(me?.first_name?.[0] ?? '?') + (me?.last_name?.[0] ?? '')}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => avatarRef.current?.click()}
+              aria-label="Change profile picture"
+              className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full border border-line bg-white text-brand-dark shadow-card hover:border-brand hover:text-brand"
+            >
+              <Camera size={14} />
+            </button>
+            <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={onAvatarPick} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-ink">{me?.first_name} {me?.last_name}</p>
+            <p className="truncate text-xs text-muted">{me?.email}</p>
+          </div>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={isBusiness}
+            onChange={(e) => setIsBusiness(e.target.checked)}
+            className="h-4 w-4 accent-[#0f766e]"
+          />
+          I&apos;m booking as a business
+        </label>
+        {isBusiness && (
+          <div>
+            <label className="label">Business name</label>
+            <input className="field" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8 card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+            <ScrollText size={14} /> KYC verification
+          </h2>
+          <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset ${kycTone}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+            {profile.kyc_status_display}
+          </span>
+        </div>
+        <p className="text-xs text-muted">
+          Upload a clear photo of a government-issued ID. Lawyers need this to open trust accounts on your behalf.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Document type</label>
+            <select className="field" value={idType} onChange={(e) => setIdType(e.target.value)}>
+              <option value="national_id">National ID</option>
+              <option value="passport">Passport</option>
+              <option value="drivers_licence">Driver&apos;s licence</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Document number</label>
+            <input className="field" value={idNumber} onChange={(e) => setIdNumber(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="label">Upload document</label>
+          <div className="flex items-center gap-3 rounded-lg border border-dashed border-line bg-white px-3 py-3 text-sm">
+            <button
+              type="button"
+              onClick={() => idFileRef.current?.click()}
+              className="rounded-md bg-brand-dark px-3 py-1 text-xs font-semibold text-white hover:bg-brand"
+            >
+              {profile.id_document_file_url ? 'Replace file' : 'Choose file'}
+            </button>
+            {profile.id_document_file_url ? (
+              <a href={profile.id_document_file_url} target="_blank" rel="noreferrer" className="truncate text-xs text-brand hover:underline">
+                View uploaded ID
+              </a>
+            ) : (
+              <span className="text-xs text-muted">PDF or image, no larger than 5MB.</span>
+            )}
+            <input ref={idFileRef} type="file" accept=".pdf,image/*" className="hidden" />
+          </div>
+        </div>
+        <div className="flex items-center justify-end">
+          <button
+            onClick={saveProfile}
+            disabled={busy}
+            className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RateField({
+  icon: Icon,
+  label,
+  hint,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1.5">
+        <Icon size={13} className="text-muted" />
+        <label className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</label>
+      </div>
+      {children}
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
     </div>
   );
 }

@@ -1,8 +1,10 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .views import (
+    AcceptInviteView,
     RegisterAPIView,
     UserViewSet,
+    MyClientProfileView,
     MyLawyerProfileView,
     LawyerViewSet,
     FirmViewSet,
@@ -11,6 +13,8 @@ from .views import (
     ChannelViewSet,
     MessageViewSet,
     ConsultationViewSet,
+    NotificationViewSet,
+    PromoteFirmAdminView,
     RetainerViewSet,
     DocumentViewSet,
     PaymentAccountViewSet,
@@ -29,6 +33,7 @@ router.register('register', RegisterAPIView, basename='register')
 router.register('lawyers', LawyerViewSet, basename='lawyer')
 router.register('firms', FirmViewSet, basename='firm')
 router.register('payment-accounts', PaymentAccountViewSet, basename='paymentaccount')
+router.register('notifications', NotificationViewSet, basename='notification')
 router.register('matters', MatterViewSet, basename='matter')
 router.register('channels', ChannelViewSet, basename='channel')
 router.register('messages', MessageViewSet, basename='message')
@@ -42,7 +47,10 @@ router.register('trust-transactions', TrustTransactionViewSet, basename='trusttr
 urlpatterns = [
     path('', include(router.urls)),
     path('me/lawyer-profile/', MyLawyerProfileView.as_view(), name='my-lawyer-profile'),
+    path('me/client-profile/', MyClientProfileView.as_view(), name='my-client-profile'),
     path('me/firm/', JoinFirmView.as_view(), name='me-firm'),
+    path('firms/<int:pk>/admin/', PromoteFirmAdminView.as_view(), name='firm-promote-admin'),
+    path('auth/accept-invite/', AcceptInviteView.as_view(), name='accept-invite'),
     path('transactions/', TransactionsView.as_view(), name='transactions'),
     path('auth/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),

@@ -46,6 +46,10 @@ import { StarRating, StarInput } from '@/components/Stars';
 import ChatDoodles from '@/components/ChatDoodles';
 import PayInvoiceModal from '@/components/PayInvoiceModal';
 import { useToast } from '@/components/Toast';
+import { setRunning as setRunningStore, useRunningTimer } from '@/lib/timerStore';
+import { DraftRow, RejectPaymentModal, RescheduleModal } from '@/components/MatterModals';
+import { useChannelSocket } from '@/lib/channelSocket';
+import { MessageCircle, Smile } from 'lucide-react';
 
 type DrawerTab = 'media' | 'links' | 'drafts' | 'payments' | 'time' | 'reviews';
 
@@ -778,7 +782,24 @@ function MessageThread({
   const [paying, setPaying] = useState<Payment | null>(null);
   const [rejecting, setRejecting] = useState<Payment | null>(null);
   const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
+  const [threadParent, setThreadParent] = useState<Message | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Live updates — any chat event triggers a message reload.
+  useChannelSocket(channelId, (event) => {
+    if (event.kind === 'message.created' || event.kind === 'message.reaction') {
+      onSent();
+    }
+  });
+
+  async function toggleReaction(messageId: number, emoji: string) {
+    try {
+      await messagesApi.react(messageId, emoji);
+      onSent();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not react.');
+    }
+  }
 
   async function approvePayment(p: Payment) {
     const ok = await toast.confirm({
@@ -893,30 +914,15 @@ function MessageThread({
             const mine = m.sender.id === meId;
             const grouped = prev && prev.kind === 'message' && prev.m.sender.id === m.sender.id;
             return (
-              <div key={`m-${m.id}`} className={`flex ${mine ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-3'}`}>
-                {!mine && (
-                  <div className={`mr-2 h-7 w-7 shrink-0 ${grouped ? 'invisible' : ''}`}>
-                    <div className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-bold text-brand">
-                      {(m.sender.full_name || m.sender.email).split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()}
-                    </div>
-                  </div>
-                )}
-                <div
-                  className={`max-w-[78%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
-                    mine
-                      ? 'rounded-br-md bg-brand-dark text-white'
-                      : 'rounded-bl-md border border-line bg-white text-ink'
-                  }`}
-                >
-                  {!mine && !grouped && (
-                    <p className="mb-0.5 text-xs font-semibold text-brand">{m.sender.full_name}</p>
-                  )}
-                  <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                  <p className={`mt-0.5 text-right text-[10px] ${mine ? 'text-white/60' : 'text-muted'}`}>
-                    {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                </div>
-              </div>
+              <MessageBubble
+                key={`m-${m.id}`}
+                m={m}
+                mine={mine}
+                grouped={grouped}
+                meId={meId}
+                onReact={(emoji) => toggleReaction(m.id, emoji)}
+                onOpenThread={() => setThreadParent(m)}
+              />
             );
           })}
             <div ref={bottomRef} />
@@ -990,133 +996,16 @@ function MessageThread({
           }}
         />
       )}
+      {threadParent && (
+        <ThreadModal
+          parent={threadParent}
+          channelId={channelId}
+          meId={meId}
+          onClose={() => setThreadParent(null)}
+          onChange={() => onSent()}
+        />
+      )}
     </>
-  );
-}
-
-function RejectPaymentModal({
-  payment,
-  onClose,
-  onDone,
-}: {
-  payment: Payment;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      await paymentsApi.review(payment.id, { status: 'rejected', review_note: note.trim() });
-      onDone();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reject.');
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
-        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
-          <h3 className="text-base font-bold">Reject payment</h3>
-          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
-            <X size={18} />
-          </button>
-        </div>
-        <form onSubmit={submit} className="space-y-3 p-5">
-          <p className="text-xs text-muted">
-            ${Number(payment.amount).toFixed(2)} {payment.currency}. The payer will be notified and can re-upload.
-          </p>
-          <label className="label">Reason (optional)</label>
-          <textarea
-            className="field"
-            rows={3}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. POP reference doesn't match the bank statement."
-          />
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <button
-            disabled={busy}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-500 disabled:opacity-50"
-          >
-            {busy ? 'Rejecting…' : 'Confirm rejection'}
-            {!busy && <ThumbsDown size={16} />}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function RescheduleModal({
-  consultation,
-  onClose,
-  onDone,
-}: {
-  consultation: Consultation;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const initial = (() => {
-    const d = new Date(consultation.scheduled_time);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  })();
-  const [when, setWhen] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!when) return;
-    setBusy(true);
-    try {
-      await consultationsApi.reschedule(consultation.id, new Date(when).toISOString());
-      onDone();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reschedule.');
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
-        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
-          <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
-              <CalendarClock size={18} />
-            </span>
-            <h3 className="text-base font-bold">Reschedule consultation</h3>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
-            <X size={18} />
-          </button>
-        </div>
-        <form onSubmit={submit} className="space-y-3 p-5">
-          <p className="text-xs text-muted">
-            Currently {new Date(consultation.scheduled_time).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}.
-            Pick a new time — the other party will need to re-confirm.
-          </p>
-          <label className="label">New time</label>
-          <input type="datetime-local" className="field" value={when} onChange={(e) => setWhen(e.target.value)} required />
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <button
-            disabled={busy}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand disabled:opacity-50"
-          >
-            {busy ? 'Saving…' : 'Reschedule'}
-            {!busy && <Check size={16} />}
-          </button>
-        </form>
-      </div>
-    </div>
   );
 }
 
@@ -1349,18 +1238,13 @@ function DraftsPanel({ matterId, items, onChange }: { matterId: number; items: D
         <p className="text-sm text-muted">No drafts yet.</p>
       ) : (
         <div className="space-y-2">
-          {items.map((d) => (
-            <div key={d.id} className="rounded-lg border border-line p-3">
-              <p className="text-sm font-semibold">{d.title}</p>
-              <p className="mt-1 whitespace-pre-wrap text-xs text-ink/70">{d.body || '(empty)'}</p>
-              <p className="mt-2 text-[11px] text-muted">v{d.version} · {d.uploader_detail?.full_name}</p>
-            </div>
-          ))}
+          {items.map((d) => <DraftRow key={d.id} d={d} onChange={onChange} />)}
         </div>
       )}
     </div>
   );
 }
+
 
 function DocList({ items, empty }: { items: DocumentItem[]; empty: string }) {
   if (items.length === 0) return <p className="text-sm text-muted">{empty}</p>;
@@ -1476,13 +1360,9 @@ function fmt(secs: number) {
 
 function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () => void }) {
   const toast = useToast();
-  const [running, setRunning] = useState<TimeEntry | null>(null);
+  const running = useRunningTimer();
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    timeApi.running().then((r) => setRunning(r)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -1498,7 +1378,8 @@ function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () =>
   async function start() {
     setBusy(true);
     try {
-      setRunning(await timeApi.start(matterId));
+      const r = await timeApi.start(matterId);
+      setRunningStore(r);
       toast.success('Timer started.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Could not start timer.');
@@ -1511,7 +1392,7 @@ function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () =>
     setBusy(true);
     try {
       const stopped = await timeApi.stop(running.id);
-      setRunning(null);
+      setRunningStore(null);
       setElapsed(0);
       onChange();
       toast.success(`Logged ${stopped.minutes}m · $${stopped.amount ?? '0.00'}.`, { title: 'Timer stopped' });
@@ -1620,6 +1501,262 @@ function ReviewsPanel({ matterId, items, canReview, onChange }: { matterId: numb
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+const QUICK_EMOJI = ['👍', '❤️', '😂', '🎉', '✅', '👀'];
+
+function MessageBubble({
+  m,
+  mine,
+  grouped,
+  meId,
+  onReact,
+  onOpenThread,
+}: {
+  m: Message;
+  mine: boolean;
+  grouped?: boolean;
+  meId?: number;
+  onReact: (emoji: string) => void;
+  onOpenThread: () => void;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+  return (
+    <div className={`group flex ${mine ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-3'}`}>
+      {!mine && (
+        <div className={`mr-2 h-7 w-7 shrink-0 ${grouped ? 'invisible' : ''}`}>
+          <div className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-bold text-brand">
+            {(m.sender.full_name || m.sender.email).split(' ').map((s) => s[0]).slice(0, 2).join('').toUpperCase()}
+          </div>
+        </div>
+      )}
+      <div className={`relative max-w-[78%] ${mine ? 'items-end' : 'items-start'}`}>
+        <div
+          className={`relative rounded-2xl px-3 py-2 text-sm shadow-sm ${
+            mine
+              ? 'rounded-br-md bg-brand-dark text-white'
+              : 'rounded-bl-md border border-line bg-white text-ink'
+          }`}
+        >
+          {!mine && !grouped && (
+            <p className="mb-0.5 text-xs font-semibold text-brand">{m.sender.full_name}</p>
+          )}
+          <p className="whitespace-pre-wrap break-words">{m.content}</p>
+          <p className={`mt-0.5 text-right text-[10px] ${mine ? 'text-white/60' : 'text-muted'}`}>
+            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </p>
+
+          {/* Hover toolbar */}
+          <div
+            className={`pointer-events-none absolute -top-3 ${
+              mine ? 'left-1' : 'right-1'
+            } flex items-center gap-0.5 rounded-full border border-line bg-white px-1 py-0.5 opacity-0 shadow-sm transition group-hover:pointer-events-auto group-hover:opacity-100`}
+          >
+            <button
+              type="button"
+              onClick={() => setShowPicker((s) => !s)}
+              aria-label="React"
+              className="grid h-6 w-6 place-items-center rounded-full text-muted hover:bg-canvas hover:text-ink"
+            >
+              <Smile size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={onOpenThread}
+              aria-label="Reply in thread"
+              className="grid h-6 w-6 place-items-center rounded-full text-muted hover:bg-canvas hover:text-ink"
+            >
+              <MessageCircle size={12} />
+            </button>
+          </div>
+          {showPicker && (
+            <div
+              className={`absolute z-20 mt-1 ${mine ? 'left-1' : 'right-1'} top-full flex items-center gap-1 rounded-full border border-line bg-white px-1.5 py-1 shadow-lg`}
+              onMouseLeave={() => setShowPicker(false)}
+            >
+              {QUICK_EMOJI.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => {
+                    onReact(e);
+                    setShowPicker(false);
+                  }}
+                  className="grid h-7 w-7 place-items-center rounded-full text-sm hover:bg-canvas"
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Reaction pills */}
+        {(m.reactions ?? []).length > 0 && (
+          <div className={`mt-1 flex flex-wrap gap-1 ${mine ? 'justify-end' : ''}`}>
+            {m.reactions!.map((r) => {
+              const isMine = meId != null && r.user_ids.includes(meId);
+              return (
+                <button
+                  key={r.emoji}
+                  type="button"
+                  onClick={() => onReact(r.emoji)}
+                  className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] ${
+                    isMine
+                      ? 'border-brand bg-brand-light/15 text-brand-dark'
+                      : 'border-line bg-white text-muted hover:border-brand'
+                  }`}
+                  title={`${r.count} ${r.count === 1 ? 'reaction' : 'reactions'}`}
+                >
+                  <span>{r.emoji}</span>
+                  <span className="font-semibold">{r.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Thread reply indicator */}
+        {!!m.reply_count && m.reply_count > 0 && (
+          <button
+            type="button"
+            onClick={onOpenThread}
+            className={`mt-1 inline-flex items-center gap-1 rounded-full bg-brand-light/15 px-2 py-0.5 text-[11px] font-semibold text-brand-dark hover:bg-brand-light/30 ${mine ? '' : ''}`}
+          >
+            <MessageCircle size={11} /> {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ThreadModal({
+  parent,
+  channelId,
+  meId,
+  onClose,
+  onChange,
+}: {
+  parent: Message;
+  channelId: number;
+  meId?: number;
+  onClose: () => void;
+  onChange: () => void;
+}) {
+  const toast = useToast();
+  const [replies, setReplies] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+
+  async function refresh() {
+    try {
+      const r = await messagesApi.replies(parent.id);
+      setReplies(r);
+    } catch {}
+  }
+
+  useEffect(() => {
+    refresh().finally(() => setLoading(false));
+  }, [parent.id]);
+
+  // Live updates inside the thread.
+  useChannelSocket(channelId, (event) => {
+    if (event.kind === 'message.created' || event.kind === 'message.reaction') refresh();
+  });
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setSending(true);
+    try {
+      await messagesApi.send(channelId, text.trim(), parent.id);
+      setText('');
+      await refresh();
+      onChange();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not send.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-brand-darker/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex h-full w-full max-w-md flex-col bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
+              <MessageCircle size={18} />
+            </span>
+            <h3 className="text-base font-bold">Thread</h3>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-canvas/40 px-4 py-4">
+          <div className="rounded-2xl border border-line bg-white p-3">
+            <p className="mb-0.5 text-xs font-semibold text-brand">{parent.sender.full_name}</p>
+            <p className="whitespace-pre-wrap break-words text-sm">{parent.content}</p>
+            <p className="mt-1 text-[10px] text-muted">
+              {new Date(parent.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+            </p>
+          </div>
+          <div className="my-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted">
+            <span className="h-px flex-1 bg-line" />
+            {replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+            <span className="h-px flex-1 bg-line" />
+          </div>
+          {loading ? (
+            <p className="text-sm text-muted">Loading…</p>
+          ) : (
+            <div className="space-y-2">
+              {replies.map((r) => {
+                const mine = r.sender.id === meId;
+                return (
+                  <div key={r.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
+                      mine ? 'rounded-br-md bg-brand-dark text-white' : 'rounded-bl-md border border-line bg-white text-ink'
+                    }`}>
+                      {!mine && (
+                        <p className="mb-0.5 text-xs font-semibold text-brand">{r.sender.full_name}</p>
+                      )}
+                      <p className="whitespace-pre-wrap break-words">{r.content}</p>
+                      <p className={`mt-0.5 text-right text-[10px] ${mine ? 'text-white/60' : 'text-muted'}`}>
+                        {new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+              {replies.length === 0 && <p className="text-center text-xs text-muted">No replies yet. Be the first.</p>}
+            </div>
+          )}
+        </div>
+        <form onSubmit={send} className="flex items-end gap-2 border-t border-line bg-surface p-3">
+          <textarea
+            className="field max-h-32 min-h-[44px] resize-none rounded-2xl"
+            rows={1}
+            placeholder="Reply in thread…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) send(e); }}
+          />
+          <button
+            type="submit"
+            disabled={sending || !text.trim()}
+            aria-label="Send reply"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand-dark text-white transition-colors hover:bg-brand disabled:opacity-40"
+          >
+            <Send size={18} />
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

@@ -29,6 +29,7 @@ interface AppData {
   matters: Matter[];
   retainers: Retainer[];
   consultations: Consultation[];
+  reloadMe: () => Promise<void>;
   reloadMatters: () => Promise<void>;
   reloadRetainers: () => Promise<void>;
   reloadConsultations: () => Promise<void>;
@@ -59,6 +60,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [matterQuery, setMatterQuery] = useState('');
   const [createMatterOpen, setCreateMatterOpen] = useState(false);
 
+  const reloadMe = useCallback(async () => {
+    try {
+      setMe(await auth.me());
+    } catch {}
+  }, []);
   const reloadMatters = useCallback(async () => setMatters((await mattersApi.list()).results), []);
   const reloadRetainers = useCallback(async () => setRetainers((await retainersApi.list()).results), []);
   const reloadConsultations = useCallback(
@@ -134,13 +140,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <nav className="space-y-1 px-2 py-3">
+      {/* Primary nav — desktop only; on mobile the bottom strip handles these. */}
+      <nav className="hidden space-y-1 px-2 py-3 md:block">
         {navItem('/dashboard', 'Dashboard', <Home size={16} />)}
         {isClient && navItem('/my-lawyers', 'My Legal Team', <GraduationCap size={16} />)}
         {navItem('/bookings', isLawyer ? 'Bookings' : 'My Bookings', <Calendar size={16} />, pendingBookings)}
         {isLawyer && navItem('/billables', 'Billables', <Clock size={16} />)}
         {navItem('/transactions', 'Transactions', <Wallet size={16} />)}
-        {isLawyer && navItem('/settings', 'Settings & Rate', <Settings size={16} />)}
+      </nav>
+      {/* Always visible — Settings & Matters live in the hamburger on mobile. */}
+      <nav className="space-y-1 px-2 pt-3 md:pt-0">
+        {navItem('/settings', isLawyer ? 'Settings & Rate' : 'Settings & KYC', <Settings size={16} />)}
       </nav>
 
       <div className="flex items-center justify-between px-4 pb-1 pt-3">
@@ -196,7 +206,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           const q = matterQuery.trim().toLowerCase();
           const visible = q ? matters.filter((m) => m.title.toLowerCase().includes(q)) : matters;
           if (matters.length > 0 && visible.length === 0) {
-            return <p className="px-3 py-2 text-xs text-muted">No matches for &ldquo;{matterQuery}&rdquo;.</p>;
+            return (
+              <div className="flex flex-col items-center gap-1 px-3 py-4 text-center">
+                <Search size={14} className="text-muted/60" />
+                <p className="text-xs text-muted">No matches for &ldquo;{matterQuery}&rdquo;</p>
+              </div>
+            );
           }
           return visible.map((m) => {
             const active = pathname === `/matters/${m.id}`;
@@ -226,7 +241,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider
-      value={{ me, matters, retainers, consultations, reloadMatters, reloadRetainers, reloadConsultations }}
+      value={{ me, matters, retainers, consultations, reloadMe, reloadMatters, reloadRetainers, reloadConsultations }}
     >
       <div className="flex h-screen overflow-hidden bg-white">
         <aside className="hidden md:block">{sidebar}</aside>
@@ -247,7 +262,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               className="h-10 w-auto"
             />
           </header>
-          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto pb-2 md:pb-0">{children}</main>
+          <MobileNavStrip
+            pathname={pathname}
+            isLawyer={isLawyer}
+            isClient={!!isClient}
+            pendingBookings={pendingBookings}
+          />
         </div>
       </div>
       {createMatterOpen && (
@@ -257,6 +278,66 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         />
       )}
     </Ctx.Provider>
+  );
+}
+
+function MobileNavStrip({
+  pathname,
+  isLawyer,
+  isClient,
+  pendingBookings,
+}: {
+  pathname: string;
+  isLawyer: boolean;
+  isClient: boolean;
+  pendingBookings: number;
+}) {
+  const items: Array<{ href: string; label: string; icon: React.ReactNode; badge?: number }> = [
+    { href: '/dashboard', label: 'Dashboard', icon: <Home size={16} /> },
+    ...(isClient
+      ? [{ href: '/my-lawyers', label: 'Team', icon: <GraduationCap size={16} /> }]
+      : []),
+    {
+      href: '/bookings',
+      label: isLawyer ? 'Bookings' : 'My Bookings',
+      icon: <Calendar size={16} />,
+      badge: pendingBookings || undefined,
+    },
+    ...(isLawyer
+      ? [{ href: '/billables', label: 'Billables', icon: <Clock size={16} /> }]
+      : []),
+    { href: '/transactions', label: 'Transactions', icon: <Wallet size={16} /> },
+  ];
+
+  return (
+    <nav
+      aria-label="Primary"
+      className="flex shrink-0 overflow-x-auto border-t border-line bg-surface px-2 pb-[env(safe-area-inset-bottom)] md:hidden"
+    >
+      {items.map((it) => {
+        const active = pathname === it.href || pathname.startsWith(it.href + '/');
+        return (
+          <Link
+            key={it.href}
+            href={it.href}
+            className={`relative flex flex-1 min-w-[80px] flex-col items-center gap-0.5 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide transition ${
+              active ? 'text-brand-dark' : 'text-muted hover:text-ink'
+            }`}
+          >
+            <span className="relative">
+              {it.icon}
+              {it.badge ? (
+                <span className="absolute -right-2 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-brand-dark px-1 text-[9px] font-bold text-white">
+                  {it.badge}
+                </span>
+              ) : null}
+            </span>
+            <span>{it.label}</span>
+            {active && <span className="absolute inset-x-2 top-0 h-0.5 rounded-full bg-brand-dark" />}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 

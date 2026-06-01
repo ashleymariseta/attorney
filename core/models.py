@@ -52,6 +52,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
 
+    def get_full_name(self):
+        return f'{self.first_name} {self.last_name}'.strip()
+
+    def get_short_name(self):
+        return self.first_name or self.email
+
     def __str__(self):
         return f'{self.email} ({self.role})'
 
@@ -113,6 +119,9 @@ class LawyerProfile(models.Model):
     user = models.OneToOneField('core.User', on_delete=models.CASCADE, related_name='lawyer_profile')
     firm = models.ForeignKey(Firm, null=True, blank=True, on_delete=models.SET_NULL, related_name='lawyers')
     bar_number = models.CharField(max_length=64, blank=True)
+    practising_certificate_number = models.CharField(max_length=64, blank=True)
+    practising_certificate_expires = models.DateField(null=True, blank=True)
+    practising_certificate_file = models.FileField(upload_to='certs/', null=True, blank=True)
     jurisdictions = models.JSONField(default=list, blank=True)
     practice_areas = models.JSONField(default=list, blank=True)
     languages = models.JSONField(default=list, blank=True)
@@ -126,11 +135,28 @@ class LawyerProfile(models.Model):
         return f'LawyerProfile({self.user.email})'
 
 
+class KycStatus(models.TextChoices):
+    UNVERIFIED = 'unverified', 'Unverified'
+    PENDING = 'pending', 'Pending Review'
+    VERIFIED = 'verified', 'Verified'
+    REJECTED = 'rejected', 'Rejected'
+
+
+class IdDocumentType(models.TextChoices):
+    NATIONAL_ID = 'national_id', 'National ID'
+    PASSPORT = 'passport', 'Passport'
+    DRIVERS_LICENCE = 'drivers_licence', "Driver's licence"
+
+
 class ClientProfile(models.Model):
     user = models.OneToOneField('core.User', on_delete=models.CASCADE, related_name='client_profile')
     business_name = models.CharField(max_length=240, blank=True)
     is_business = models.BooleanField(default=False)
     kyc_submitted = models.BooleanField(default=False)
+    kyc_status = models.CharField(max_length=16, choices=KycStatus.choices, default=KycStatus.UNVERIFIED)
+    id_document_type = models.CharField(max_length=24, choices=IdDocumentType.choices, blank=True)
+    id_document_number = models.CharField(max_length=64, blank=True)
+    id_document_file = models.FileField(upload_to='kyc/', null=True, blank=True)
     documents = models.JSONField(default=list, blank=True)
 
     def __str__(self):
@@ -191,11 +217,27 @@ class Channel(models.Model):
 class Message(models.Model):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='sent_messages')
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies'
+    )
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f'Message({self.sender.email})'
+
+
+class MessageReaction(models.Model):
+    """An emoji reaction by a user on a message."""
+
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='reactions')
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='reactions')
+    emoji = models.CharField(max_length=16)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('message', 'user', 'emoji')]
+        ordering = ['created_at']
 
 
 class ConsultationStatus(models.TextChoices):
@@ -321,6 +363,11 @@ class Document(models.Model):
     file = models.FileField(upload_to=matter_document_path, null=True, blank=True)
     body = models.TextField(blank=True, help_text='Inline draft content (for drafts without a file).')
     version = models.PositiveIntegerField(default=1)
+    signed_by = models.ForeignKey(
+        'core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='signed_documents'
+    )
+    signed_at = models.DateTimeField(null=True, blank=True)
+    signature_data = models.TextField(blank=True, help_text='Inline signature payload (base64 PNG or text).')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -328,6 +375,45 @@ class Document(models.Model):
 
     def __str__(self):
         return f'{self.get_kind_display()}: {self.title}'
+
+
+class MatterInvite(models.Model):
+    """Invitation token for a brand-new client to set a password and join a matter."""
+
+    user = models.OneToOneField('core.User', on_delete=models.CASCADE, related_name='matter_invite')
+    matter = models.ForeignKey(Matter, on_delete=models.CASCADE, related_name='invites')
+    invited_by = models.ForeignKey(
+        'core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='invites_sent'
+    )
+    token = models.CharField(max_length=64, unique=True)
+    sent_to_email = models.EmailField(blank=True)
+    sent_to_phone = models.CharField(max_length=32, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class NotificationKind(models.TextChoices):
+    INVITE = 'invite', 'Invite'
+    BOOKING = 'booking', 'Booking'
+    PAYMENT = 'payment', 'Payment'
+    DOCUMENT = 'document', 'Document'
+    GENERIC = 'generic', 'Generic'
+
+
+class Notification(models.Model):
+    """In-app notification log; also written when we 'send' an email/SMS stub."""
+
+    recipient = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='notifications')
+    kind = models.CharField(max_length=16, choices=NotificationKind.choices, default=NotificationKind.GENERIC)
+    title = models.CharField(max_length=240)
+    body = models.TextField(blank=True)
+    link = models.CharField(max_length=240, blank=True)
+    sent_email = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
 
 class Review(models.Model):

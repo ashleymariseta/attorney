@@ -18,8 +18,10 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
+  matters as mattersApi,
   payments as paymentsApi,
   paymentAccounts as accountsApi,
+  type Matter,
   type Payment,
   type PaymentAccount,
 } from '@/lib/api';
@@ -55,10 +57,13 @@ export default function PayInvoiceModal({
   const methodLabel = PAY_METHODS.find((m) => m.value === method)?.label ?? '';
 
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
+  const [matter, setMatter] = useState<Matter | null>(null);
   useEffect(() => {
     accountsApi.forMatter(payment.matter).then((r) => setAccounts(r.results)).catch(() => {});
+    mattersApi.get(payment.matter).then(setMatter).catch(() => {});
   }, [payment.matter]);
   const matchingAccounts = accounts.filter((a) => a.account_type === method);
+  const payeeLabel = matter?.lawyers?.[0]?.full_name ?? matter?.lawyers?.[0]?.email ?? 'your lawyer';
 
   function continueFromMethod() {
     setError('');
@@ -152,7 +157,7 @@ export default function PayInvoiceModal({
               {matchingAccounts.length > 0 ? (
                 <div className="rounded-xl border border-brand-light/30 bg-brand-light/5 p-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-dark">
-                    Send {isCash ? 'to' : 'payment to'}
+                    Pay {payeeLabel} {isCash ? 'in person' : `via ${methodLabel}`}
                   </p>
                   <ul className="mt-2 space-y-2">
                     {matchingAccounts.map((a) => (
@@ -173,7 +178,7 @@ export default function PayInvoiceModal({
                 </div>
               ) : accounts.length > 0 ? (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  No {methodLabel} details listed for this lawyer. Pick another method or contact them.
+                  {payeeLabel} doesn&apos;t have {methodLabel} details listed. Pick another method.
                 </p>
               ) : null}
 
