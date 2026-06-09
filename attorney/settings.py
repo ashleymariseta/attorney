@@ -39,11 +39,16 @@ INSTALLED_APPS = [
     'channels',
     'core',
     'payments',
+    'workflows',
+    'corpus',
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise serves /static/ in any environment so a single container can
+    # ship the admin assets without a separate nginx layer.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -97,6 +102,12 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Media (Proof-of-Payment uploads, KYC docs, etc.).
 # v1 uses local storage; swap DEFAULT_FILE_STORAGE for an S3 backend in production.
@@ -121,7 +132,32 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': env.str('THROTTLE_ANON', '60/minute'),
+        'user': env.str('THROTTLE_USER', '500/minute'),
+        # Hot scopes — applied per-view via throttle_scope.
+        'auth': env.str('THROTTLE_AUTH', '10/minute'),
+        'invite_accept': env.str('THROTTLE_INVITE', '20/hour'),
+        'password_reset': env.str('THROTTLE_PASSWORD_RESET', '5/hour'),
+    },
 }
+
+# Production security defaults. When DEBUG is off, lock cookies + headers.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', True)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', 31536000)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+    X_FRAME_OPTIONS = 'DENY'
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
@@ -199,3 +235,28 @@ EMAIL_HOST_PASSWORD = env.str('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', True)
 DEFAULT_FROM_EMAIL = env.str('DEFAULT_FROM_EMAIL', 'Attorney <no-reply@attorney.local>')
 INVITE_ACCEPT_URL = env.str('INVITE_ACCEPT_URL', 'http://localhost:3000/accept-invite')
+PASSWORD_RESET_URL = env.str('PASSWORD_RESET_URL', 'http://localhost:3000/reset-password')
+EMAIL_VERIFY_URL = env.str('EMAIL_VERIFY_URL', 'http://localhost:3000/verify-email')
+
+# WhatsApp delivery for 2FA codes. When unset, codes are logged to the console
+# only — wire a real provider (Twilio, Meta Cloud API, etc.) in production.
+WHATSAPP_API_URL = env.str('WHATSAPP_API_URL', '')
+WHATSAPP_API_TOKEN = env.str('WHATSAPP_API_TOKEN', '')
+
+# Sentry — opt-in. If SENTRY_DSN is set and sentry-sdk is installed, errors
+# and slow requests get reported. Otherwise this is a silent no-op.
+SENTRY_DSN = env.str('SENTRY_DSN', '')
+if SENTRY_DSN:
+    try:
+        import sentry_sdk  # type: ignore
+        from sentry_sdk.integrations.django import DjangoIntegration  # type: ignore
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[DjangoIntegration()],
+            environment=env.str('SENTRY_ENV', 'production' if not DEBUG else 'development'),
+            traces_sample_rate=env.float('SENTRY_TRACES_SAMPLE_RATE', 0.1),
+            send_default_pii=False,
+        )
+    except ImportError:  # pragma: no cover
+        pass

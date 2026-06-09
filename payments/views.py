@@ -166,6 +166,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 payment.trust_transaction = txn
                 payment.save(update_fields=['trust_transaction', 'updated_at'])
 
+        try:
+            from core.audit import audit
+            audit(actor=request.user, action=f'payment.{decision}', obj=payment, meta={'note': note}, request=request)
+        except Exception:
+            pass
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])

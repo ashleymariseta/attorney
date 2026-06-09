@@ -85,8 +85,12 @@ export interface User {
   email: string;
   first_name: string;
   last_name: string;
+  phone_number?: string;
+  whatsapp_number?: string;
   role: string;
   is_verified: boolean;
+  email_verified?: boolean;
+  two_factor_method?: 'off' | 'email' | 'whatsapp';
   avatar_url?: string | null;
 }
 export interface MiniUser {
@@ -117,6 +121,7 @@ export interface Matter {
 }
 export interface LawyerProfile {
   bar_number: string;
+  country: string;
   jurisdictions: string[];
   practice_areas: string[];
   languages: string[];
@@ -135,6 +140,7 @@ export interface Lawyer {
   profile: LawyerProfile | null;
   on_retainer: boolean;
   hourly_rate: string | null;
+  country: string;
   avg_rating: number | null;
   review_count: number;
 }
@@ -206,6 +212,7 @@ export interface LawyerProfileEdit {
   practising_certificate_number: string;
   practising_certificate_expires: string | null;
   practising_certificate_file_url: string | null;
+  country: string;
   jurisdictions: string[];
   practice_areas: string[];
   languages: string[];
@@ -227,6 +234,7 @@ export interface FirmCard {
   default_hourly_rate?: string | null;
   default_consultation_price?: string | null;
   verified: boolean;
+  country: string;
   lawyer_count: number;
   practice_areas: string[];
   jurisdictions: string[];
@@ -315,9 +323,25 @@ export const auth = {
     return api('/api/v1/register/', { method: 'POST', body: JSON.stringify(payload) }, { auth: false });
   },
   async login(email: string, password: string) {
-    const tok = await api<{ access: string; refresh: string }>(
+    // Login either returns tokens directly OR a 2FA challenge — callers must
+    // check `requires_2fa` and pass the user through the verify step.
+    const res = await api<
+      | { access: string; refresh: string; requires_2fa?: never }
+      | { requires_2fa: true; method: 'email' | 'whatsapp'; challenge_token: string; detail: string }
+    >(
       '/api/v1/auth/token/',
       { method: 'POST', body: JSON.stringify({ email, password }) },
+      { auth: false }
+    );
+    if (!('requires_2fa' in res)) {
+      setTokens(res.access, res.refresh);
+    }
+    return res;
+  },
+  async verify2fa(challengeToken: string, code: string) {
+    const tok = await api<{ access: string; refresh: string }>(
+      '/api/v1/auth/2fa/verify/',
+      { method: 'POST', body: JSON.stringify({ challenge_token: challengeToken, code }) },
       { auth: false }
     );
     setTokens(tok.access, tok.refresh);
@@ -399,10 +423,10 @@ export const consultations = {
 
 export const firms = {
   list() {
-    return api<Paginated<FirmCard>>('/api/v1/firms/');
+    return api<Paginated<FirmCard>>('/api/v1/firms/', {}, { auth: isAuthed() });
   },
   get(id: number) {
-    return api<FirmCard>(`/api/v1/firms/${id}/`);
+    return api<FirmCard>(`/api/v1/firms/${id}/`, {}, { auth: isAuthed() });
   },
   update(id: number, payload: Partial<FirmCard>) {
     return api<FirmCard>(`/api/v1/firms/${id}/`, {
@@ -516,6 +540,69 @@ export const auth_invite = {
   },
 };
 
+export const passwordReset = {
+  request(email: string) {
+    return api<{ detail: string }>(
+      '/api/v1/auth/password-reset/',
+      { method: 'POST', body: JSON.stringify({ email }) },
+      { auth: false }
+    );
+  },
+  confirm(payload: { uid: string; token: string; password: string }) {
+    return api<{ access: string; refresh: string }>(
+      '/api/v1/auth/password-reset/confirm/',
+      { method: 'POST', body: JSON.stringify(payload) },
+      { auth: false }
+    );
+  },
+};
+
+export const twoFactor = {
+  setup(method: 'email' | 'whatsapp', whatsappNumber?: string) {
+    return api<{ challenge_token: string; method: 'email' | 'whatsapp' }>('/api/v1/auth/2fa/setup/', {
+      method: 'POST',
+      body: JSON.stringify({ method, whatsapp_number: whatsappNumber }),
+    });
+  },
+  confirmSetup(challengeToken: string, code: string) {
+    return api<{ two_factor_method: 'off' | 'email' | 'whatsapp' }>('/api/v1/auth/2fa/setup/confirm/', {
+      method: 'POST',
+      body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+  },
+  disable(challengeToken: string, code: string) {
+    return api<{ two_factor_method: 'off' }>('/api/v1/auth/2fa/disable/', {
+      method: 'POST',
+      body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+  },
+};
+
+export const accountActions = {
+  exportData() {
+    return api<Record<string, unknown>>('/api/v1/me/export/');
+  },
+  deleteAccount() {
+    return api<{ detail: string }>('/api/v1/me/delete/', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: 'DELETE' }),
+    });
+  },
+};
+
+export const emailVerify = {
+  request() {
+    return api<{ detail: string }>('/api/v1/auth/email-verify/request/', { method: 'POST' });
+  },
+  confirm(payload: { uid: string; token: string }) {
+    return api<{ detail: string }>(
+      '/api/v1/auth/email-verify/confirm/',
+      { method: 'POST', body: JSON.stringify(payload) },
+      { auth: false }
+    );
+  },
+};
+
 export const firmAdmin = {
   promote(firmId: number, userId: number) {
     return api<FirmCard>(`/api/v1/firms/${firmId}/admin/`, {
@@ -603,10 +690,13 @@ export const lawyerProfile = {
 export const lawyers = {
   list(search = '') {
     const q = search ? `?search=${encodeURIComponent(search)}` : '';
-    return api<Paginated<Lawyer>>(`/api/v1/lawyers/${q}`);
+    return api<Paginated<Lawyer>>(`/api/v1/lawyers/${q}`, {}, { auth: isAuthed() });
   },
   get(id: number) {
-    return api<Lawyer>(`/api/v1/lawyers/${id}/`);
+    return api<Lawyer>(`/api/v1/lawyers/${id}/`, {}, { auth: isAuthed() });
+  },
+  reviews(id: number) {
+    return api<Review[]>(`/api/v1/lawyers/${id}/reviews/`, {}, { auth: isAuthed() });
   },
 };
 
@@ -619,6 +709,11 @@ export const retainers = {
 export const messages = {
   listForChannel(channelId: number) {
     return api<Paginated<Message>>(`/api/v1/messages/?channel=${channelId}`);
+  },
+  listForChannelPage(channelId: number, page = 1) {
+    return api<{ count: number; next: string | null; previous: string | null; results: Message[] }>(
+      `/api/v1/messages/?channel=${channelId}&page=${page}&ordering=-created_at`
+    );
   },
   send(channelId: number, content: string, parent?: number) {
     const body: any = { channel: channelId, content };
@@ -660,6 +755,229 @@ export const documents = {
       method: 'POST',
       body: JSON.stringify({ signature_data: signatureData }),
     });
+  },
+};
+
+// ---- Legal corpus & Co-researcher ----
+export type CorpusKind = 'case' | 'judgement' | 'rules' | 'constitution' | 'statute';
+
+export interface CorpusCollectionItem {
+  id: number;
+  slug: string;
+  name: string;
+  kind: CorpusKind;
+  kind_display: string;
+  description: string;
+  source_url: string;
+  document_count: number;
+}
+
+export interface ResearchCitationDoc {
+  id: number;
+  title: string;
+  citation: string;
+  jurisdiction: string;
+  year: number | null;
+  source_url: string;
+  kind: CorpusKind;
+  kind_display: string;
+  collection_name: string;
+}
+
+export interface ResearchCitation {
+  id: number;
+  rank: number;
+  score: number;
+  document: ResearchCitationDoc;
+  excerpt: string;
+}
+
+export interface ResearchQueryData {
+  id: number;
+  question: string;
+  scope: CorpusKind[];
+  answer_text: string;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  error: string;
+  created_at: string;
+  citations: ResearchCitation[];
+}
+
+export const coResearcher = {
+  collections() {
+    return api<Paginated<CorpusCollectionItem>>('/api/v1/corpus-collections/');
+  },
+  ask(payload: { question: string; scope?: CorpusKind[]; provider_config_id?: number; model?: string }) {
+    return api<ResearchQueryData>('/api/v1/co-researcher/ask/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  history() {
+    return api<Paginated<ResearchQueryData>>('/api/v1/research-queries/');
+  },
+};
+
+// ---- AI Workflows ----
+export type LlmProviderId = 'anthropic' | 'openai' | 'local';
+
+export interface WorkflowTemplate {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  matter_type: string;
+  stages: Array<{
+    slug: string;
+    title: string;
+    purpose: string;
+    retrieval_scope: string;
+    default_provider: LlmProviderId;
+    default_model: string;
+    prompt_template: string;
+  }>;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface StageResultData {
+  id: number;
+  provider: LlmProviderId;
+  model: string;
+  system_prompt: string;
+  user_prompt: string;
+  output_text: string;
+  retrieval_chunk_ids: number[];
+  tokens_in: number;
+  tokens_out: number;
+  error: string;
+  created_at: string;
+}
+
+export interface WorkflowStageData {
+  id: number;
+  slug: string;
+  title: string;
+  purpose: string;
+  retrieval_scope: string;
+  prompt_template: string;
+  prompt_template_version: number;
+  provider: LlmProviderId;
+  provider_display: string;
+  model: string;
+  order: number;
+  status: 'pending' | 'in_progress' | 'awaiting_approval' | 'approved';
+  status_display: string;
+  approved_by: number | null;
+  approved_at: string | null;
+  latest_result: StageResultData | null;
+}
+
+export interface WorkflowListItem {
+  id: number;
+  name: string;
+  status: 'active' | 'completed' | 'archived';
+  status_display: string;
+  template: number | null;
+  template_name: string | null;
+  matter: number | null;
+  stage_count: number;
+  approved_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowDetail extends WorkflowListItem {
+  stages: WorkflowStageData[];
+}
+
+export interface LlmProviderConfig {
+  id: number;
+  provider: LlmProviderId;
+  provider_display: string;
+  label: string;
+  base_url: string;
+  default_model: string;
+  is_default: boolean;
+  has_api_key: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LlmProviderSupport {
+  value: LlmProviderId;
+  label: string;
+  default_model: string;
+  needs_api_key: boolean;
+  needs_base_url: boolean;
+}
+
+export const workflows = {
+  templates() {
+    return api<Paginated<WorkflowTemplate>>('/api/v1/workflow-templates/');
+  },
+  list() {
+    return api<Paginated<WorkflowListItem>>('/api/v1/workflows/');
+  },
+  get(id: number) {
+    return api<WorkflowDetail>(`/api/v1/workflows/${id}/`);
+  },
+  create(payload: { template: number; name: string; matter?: number | null }) {
+    return api<WorkflowDetail>('/api/v1/workflows/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  remove(id: number) {
+    return api<void>(`/api/v1/workflows/${id}/`, { method: 'DELETE' });
+  },
+};
+
+export const workflowStages = {
+  patch(id: number, payload: Partial<WorkflowStageData>) {
+    return api<WorkflowStageData>(`/api/v1/workflow-stages/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  approve(id: number) {
+    return api<WorkflowStageData>(`/api/v1/workflow-stages/${id}/approve/`, { method: 'POST' });
+  },
+  run(
+    id: number,
+    payload: { system_prompt?: string; user_prompt?: string; model?: string; provider_config_id?: number }
+  ) {
+    return api<StageResultData>(`/api/v1/workflow-stages/${id}/run/`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+export const llmProviders = {
+  list() {
+    return api<Paginated<LlmProviderConfig>>('/api/v1/llm-providers/');
+  },
+  supported() {
+    return api<LlmProviderSupport[]>('/api/v1/llm-providers/supported/');
+  },
+  create(payload: Partial<LlmProviderConfig> & { api_key?: string }) {
+    return api<LlmProviderConfig>('/api/v1/llm-providers/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  update(id: number, payload: Partial<LlmProviderConfig> & { api_key?: string }) {
+    return api<LlmProviderConfig>(`/api/v1/llm-providers/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+  remove(id: number) {
+    return api<void>(`/api/v1/llm-providers/${id}/`, { method: 'DELETE' });
   },
 };
 

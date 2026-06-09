@@ -14,11 +14,14 @@ import {
   GraduationCap,
   Languages,
   Landmark,
+  Mail,
   MapPin,
+  MessageCircle,
   Pencil,
   Plus,
   Receipt,
   ScrollText,
+  ShieldCheck,
   Smartphone,
   Trash2,
   User as UserIcon,
@@ -28,9 +31,12 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import {
+  accountActions,
   clientProfile,
   firmAdmin,
+  twoFactor,
   firms as firmsApi,
   lawyerProfile,
   lawyers as lawyersApi,
@@ -45,6 +51,7 @@ import {
 } from '@/lib/api';
 import { useApp } from '@/components/AppShell';
 import { useToast } from '@/components/Toast';
+import { COUNTRY_OPTIONS, flagFor } from '@/lib/flag';
 
 const ACCOUNT_TYPES: Array<{ value: PaymentAccount['account_type']; label: string; icon: LucideIcon }> = [
   { value: 'ecocash', label: 'EcoCash', icon: Smartphone },
@@ -83,7 +90,7 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [acctModal, setAcctModal] = useState<{ mode: 'create' | 'edit'; record?: PaymentAccount } | null>(null);
 
-  const [tab, setTab] = useState<'profile' | 'kyc' | 'rates' | 'payments' | 'firm'>('profile');
+  const [tab, setTab] = useState<'profile' | 'kyc' | 'rates' | 'payments' | 'firm' | 'security'>('profile');
 
   useEffect(() => {
     if (!isLawyer) return;
@@ -242,7 +249,21 @@ export default function SettingsPage() {
       </div>
     );
   }
-  if (!form) return <p className="p-8 text-sm text-muted">Loading…</p>;
+  if (!form) return (
+    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+      <div className="h-8 w-40 animate-pulse rounded bg-line/70" />
+      <div className="mt-3 h-3 w-64 animate-pulse rounded bg-line/70" />
+      <div className="mt-6 flex gap-2 border-b border-line">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="my-2 h-6 w-20 animate-pulse rounded bg-line/70" />
+        ))}
+      </div>
+      <div className="mt-6 space-y-3">
+        <div className="h-32 animate-pulse rounded-xl bg-line/70" />
+        <div className="h-48 animate-pulse rounded-xl bg-line/70" />
+      </div>
+    </div>
+  );
 
   function set<K extends keyof LawyerProfileEdit>(k: K, v: LawyerProfileEdit[K]) {
     setForm((f) => (f ? { ...f, [k]: v } : f));
@@ -258,6 +279,7 @@ export default function SettingsPage() {
       const updated = await lawyerProfile.update({
         hourly_rate: form.hourly_rate,
         consultation_price: form.consultation_price,
+        country: form.country,
         practice_areas: form.practice_areas,
         jurisdictions: form.jurisdictions,
         languages: form.languages,
@@ -288,6 +310,7 @@ export default function SettingsPage() {
     { key: 'rates', label: 'Rates', icon: Coins },
     { key: 'payments', label: 'Payments', icon: Wallet },
     { key: 'firm', label: 'Firm', icon: Building2 },
+    { key: 'security', label: 'Security', icon: ShieldCheck },
   ] as const;
 
   function formSaveBar() {
@@ -383,13 +406,28 @@ export default function SettingsPage() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="label">Jurisdictions</label>
-              <input className="field" value={list(form.jurisdictions)} onChange={(e) => set('jurisdictions', parse(e.target.value))} />
+              <label className="label">Country (for flag badge)</label>
+              <select
+                className="field"
+                value={form.country ?? ''}
+                onChange={(e) => set('country', e.target.value)}
+              >
+                <option value="">— Select —</option>
+                {COUNTRY_OPTIONS.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {flagFor(c.code)} {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="label">Languages</label>
               <input className="field" value={list(form.languages)} onChange={(e) => set('languages', parse(e.target.value))} />
             </div>
+          </div>
+          <div>
+            <label className="label">Jurisdictions (countries you practise in)</label>
+            <input className="field" value={list(form.jurisdictions)} onChange={(e) => set('jurisdictions', parse(e.target.value))} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -643,6 +681,21 @@ export default function SettingsPage() {
                         <input className="field" type="number" min="0" step="1" value={firmEdit.default_consultation_price ?? ''} onChange={(e) => setFirmEdit({ ...firmEdit, default_consultation_price: e.target.value || null })} />
                       </div>
                     </div>
+                    <div>
+                      <label className="label">Country (for flag badge)</label>
+                      <select
+                        className="field"
+                        value={firmEdit.country ?? ''}
+                        onChange={(e) => setFirmEdit({ ...firmEdit, country: e.target.value })}
+                      >
+                        <option value="">— Select —</option>
+                        {COUNTRY_OPTIONS.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {flagFor(c.code)} {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <div className="flex items-center justify-end gap-2">
                       <button onClick={() => setFirmEdit(null)} className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand">
                         Cancel
@@ -753,6 +806,13 @@ export default function SettingsPage() {
       </div>
       )}
 
+      {/* SECURITY TAB */}
+      {tab === 'security' && (
+        <div className="mt-6">
+          <SecurityCard me={me} reloadMe={reloadMe} />
+        </div>
+      )}
+
       {acctModal && (
         <PaymentAccountModal
           mode={acctModal.mode}
@@ -770,6 +830,8 @@ export default function SettingsPage() {
           }}
         />
       )}
+
+      <DangerZone />
     </div>
   );
 }
@@ -1011,7 +1073,14 @@ function ClientSettings({ reloadMe }: { reloadMe: () => Promise<void> }) {
     }
   }
 
-  if (!profile) return <p className="p-8 text-sm text-muted">Loading…</p>;
+  if (!profile) return (
+    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <div className="h-8 w-32 animate-pulse rounded bg-line/70" />
+      <div className="mt-2 h-3 w-48 animate-pulse rounded bg-line/70" />
+      <div className="mt-6 h-40 animate-pulse rounded-xl bg-line/70" />
+      <div className="mt-3 h-48 animate-pulse rounded-xl bg-line/70" />
+    </div>
+  );
 
   const kycTone =
     profile.kyc_status === 'verified'
@@ -1131,6 +1200,85 @@ function ClientSettings({ reloadMe }: { reloadMe: () => Promise<void> }) {
           </button>
         </div>
       </div>
+
+      <div className="mt-8">
+        <SecurityCard me={me ?? null} reloadMe={reloadMe} />
+      </div>
+
+      <DangerZone />
+    </div>
+  );
+}
+
+function DangerZone() {
+  const toast = useToast();
+  const router = useRouter();
+  const [busy, setBusy] = useState<'export' | 'delete' | null>(null);
+
+  async function exportData() {
+    setBusy('export');
+    try {
+      const data = await accountActions.exportData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `attorney-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Data export downloaded.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not export.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteAccount() {
+    const ok = await toast.confirm({
+      title: 'Delete your account?',
+      body: 'This is irreversible. Your personal details will be anonymised and your sign-in will be disabled. Matter and ledger records are retained for compliance.',
+      confirmLabel: 'Delete account',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setBusy('delete');
+    try {
+      await accountActions.deleteAccount();
+      try { window.localStorage.removeItem('attorney.access'); window.localStorage.removeItem('attorney.refresh'); } catch {}
+      toast.success('Account deleted.', { major: true });
+      router.replace('/');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not delete.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-8 rounded-2xl border border-red-200 bg-red-50/40 p-5">
+      <h2 className="text-sm font-bold uppercase tracking-wide text-red-700">Danger zone</h2>
+      <p className="mt-1 text-xs text-muted">Export everything we hold about you, or delete your account.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={exportData}
+          disabled={busy !== null}
+          className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand hover:text-brand disabled:opacity-50"
+        >
+          {busy === 'export' ? 'Exporting…' : 'Export my data'}
+        </button>
+        <button
+          type="button"
+          onClick={deleteAccount}
+          disabled={busy !== null}
+          className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+        >
+          {busy === 'delete' ? 'Deleting…' : 'Delete my account'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1154,6 +1302,229 @@ function RateField({
       </div>
       {children}
       {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+function SecurityCard({ me, reloadMe }: { me: { two_factor_method?: string; whatsapp_number?: string; phone_number?: string } | null; reloadMe: () => Promise<void> }) {
+  const toast = useToast();
+  const current = me?.two_factor_method ?? 'off';
+  const [stage, setStage] = useState<'idle' | 'enrolling' | 'disabling'>('idle');
+  const [method, setMethod] = useState<'email' | 'whatsapp'>('email');
+  const [number, setNumber] = useState(me?.whatsapp_number || me?.phone_number || '');
+  const [challengeToken, setChallengeToken] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function startEnroll() {
+    setBusy(true);
+    try {
+      const r = await twoFactor.setup(method, method === 'whatsapp' ? number.trim() : undefined);
+      setChallengeToken(r.challenge_token);
+      setStage('enrolling');
+      toast.info(`Code sent via ${method === 'email' ? 'email' : 'WhatsApp'}. Check and enter it below.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not start setup.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishEnroll() {
+    if (code.length !== 6) return;
+    setBusy(true);
+    try {
+      await twoFactor.confirmSetup(challengeToken, code);
+      await reloadMe();
+      toast.success('Two-factor authentication is on.', { major: true });
+      setStage('idle');
+      setCode('');
+      setChallengeToken('');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not enable 2FA.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startDisable() {
+    setBusy(true);
+    try {
+      // Re-use setup endpoint to fire a code via the existing method.
+      const r = await twoFactor.setup(current as 'email' | 'whatsapp');
+      setChallengeToken(r.challenge_token);
+      setStage('disabling');
+      toast.info('Code sent — enter it below to disable 2FA.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not send code.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishDisable() {
+    if (code.length !== 6) return;
+    setBusy(true);
+    try {
+      await twoFactor.disable(challengeToken, code);
+      await reloadMe();
+      toast.success('Two-factor authentication disabled.');
+      setStage('idle');
+      setCode('');
+      setChallengeToken('');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not disable 2FA.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const enabled = current !== 'off';
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-muted">
+          <ShieldCheck size={14} /> Two-factor authentication
+        </h2>
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset ${
+            enabled
+              ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+              : 'bg-line/60 text-muted ring-line'
+          }`}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+          {enabled ? `On · ${current}` : 'Off'}
+        </span>
+      </div>
+      <p className="text-xs text-muted">
+        Add a second layer to your sign-in. We&apos;ll send a 6-digit code to your email or WhatsApp every time
+        you log in.
+      </p>
+
+      {stage === 'idle' && !enabled && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setMethod('email')}
+              className={`flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition ${
+                method === 'email' ? 'border-brand bg-brand/5 ring-1 ring-brand' : 'border-line bg-white hover:border-brand/40'
+              }`}
+            >
+              <span className={`grid h-8 w-8 place-items-center rounded-lg ${method === 'email' ? 'bg-brand text-white' : 'bg-canvas text-muted'}`}>
+                <Mail size={16} />
+              </span>
+              <span className="text-sm font-semibold text-ink">Email</span>
+              <span className="text-[11px] text-muted">Send codes to {me?.['phone_number' as never] || 'your email'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMethod('whatsapp')}
+              className={`flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition ${
+                method === 'whatsapp' ? 'border-brand bg-brand/5 ring-1 ring-brand' : 'border-line bg-white hover:border-brand/40'
+              }`}
+            >
+              <span className={`grid h-8 w-8 place-items-center rounded-lg ${method === 'whatsapp' ? 'bg-brand text-white' : 'bg-canvas text-muted'}`}>
+                <MessageCircle size={16} />
+              </span>
+              <span className="text-sm font-semibold text-ink">WhatsApp</span>
+              <span className="text-[11px] text-muted">Faster on mobile</span>
+            </button>
+          </div>
+          {method === 'whatsapp' && (
+            <div>
+              <label className="label">WhatsApp number</label>
+              <input
+                className="field"
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                placeholder="+263 77…"
+                required
+              />
+            </div>
+          )}
+          <div className="flex justify-end">
+            <button
+              onClick={startEnroll}
+              disabled={busy || (method === 'whatsapp' && !number.trim())}
+              className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand disabled:opacity-50"
+            >
+              {busy ? 'Sending code…' : 'Enable 2FA'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {stage === 'enrolling' && (
+        <div className="rounded-xl border border-brand-light/40 bg-brand-light/5 p-3">
+          <p className="text-xs text-brand-dark">Enter the 6-digit code we just sent via {method}.</p>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ''))}
+            inputMode="numeric"
+            maxLength={6}
+            className="field mt-2 text-center font-mono text-xl tracking-[0.4em]"
+            placeholder="••••••"
+            autoFocus
+          />
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button onClick={() => { setStage('idle'); setCode(''); }} className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand">
+              Cancel
+            </button>
+            <button
+              onClick={finishEnroll}
+              disabled={busy || code.length !== 6}
+              className="rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand disabled:opacity-50"
+            >
+              {busy ? 'Verifying…' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {stage === 'idle' && enabled && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted">
+            Currently sending codes via <span className="font-semibold text-ink">{current}</span>.
+          </p>
+          <button
+            onClick={startDisable}
+            disabled={busy}
+            className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-red-400 hover:text-red-600 disabled:opacity-50"
+          >
+            Disable 2FA
+          </button>
+        </div>
+      )}
+
+      {stage === 'disabling' && (
+        <div className="rounded-xl border border-red-200 bg-red-50/60 p-3">
+          <p className="text-xs text-red-800">Enter the 6-digit code we sent to confirm.</p>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ''))}
+            inputMode="numeric"
+            maxLength={6}
+            className="field mt-2 text-center font-mono text-xl tracking-[0.4em]"
+            placeholder="••••••"
+            autoFocus
+          />
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button onClick={() => { setStage('idle'); setCode(''); }} className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand">
+              Cancel
+            </button>
+            <button
+              onClick={finishDisable}
+              disabled={busy || code.length !== 6}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+            >
+              {busy ? 'Disabling…' : 'Disable'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

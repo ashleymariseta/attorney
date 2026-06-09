@@ -43,6 +43,7 @@ from .models import (
     UserRole,
 )
 from .notify import notify
+from .audit import audit
 from django.conf import settings as dj_settings
 import secrets
 from .permissions import IsAdminOrSelf
@@ -78,6 +79,8 @@ def _is_lawyer(user):
 
 
 def _retained_lawyer_ids(user):
+    if not getattr(user, 'is_authenticated', False):
+        return set()
     return set(
         Retainer.objects.filter(client=user, status=RetainerStatus.ACTIVE).values_list('lawyer_id', flat=True)
     )
@@ -197,12 +200,17 @@ class MyClientProfileView(APIView):
 
 
 class FirmViewSet(viewsets.ModelViewSet):
-    """Firm directory shown alongside lawyers. Admin of a firm can edit it."""
+    """Firm directory shown alongside lawyers. Admin of a firm can edit it.
+    GETs are public so the directory can be browsed before signing up."""
 
     serializer_class = FirmCardSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Firm.objects.all().prefetch_related('lawyers').order_by('name')
     http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_permissions(self):
+        if self.action in {'list', 'retrieve'}:
+            return [AllowAny()]
+        return [IsAuthenticated()]
 
     def update(self, request, *args, **kwargs):  # PATCH
         firm = self.get_object()
@@ -300,10 +308,11 @@ class JoinFirmView(APIView):
 
 
 class LawyerViewSet(viewsets.ReadOnlyModelViewSet):
-    """Lawyer directory used to choose a lawyer, with rate and star rating."""
+    """Lawyer directory used to choose a lawyer, with rate and star rating.
+    Public so prospective clients can browse before signing up."""
 
     serializer_class = LawyerCardSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     search_fields = ['first_name', 'last_name', 'email']
 
     def get_queryset(self):
@@ -538,6 +547,13 @@ class MatterViewSet(viewsets.ModelViewSet):
                 link=f'/matters/{matter.id}',
             )
 
+        audit(
+            actor=request.user,
+            action='matter.created_for_client',
+            obj=matter,
+            meta={'client_id': client.id, 'invited': invited},
+            request=request,
+        )
         body = MatterSerializer(matter, context=self.get_serializer_context()).data
         body['invited'] = invited
         body['client_email'] = client.email
@@ -615,6 +631,9 @@ class MessageViewSet(viewsets.ModelViewSet):
         else:
             MessageReaction.objects.create(message=message, user=request.user, emoji=emoji)
             toggled = 'added'
+        # Drop the prefetch cache so the serializer sees the new row.
+        if hasattr(message, '_prefetched_objects_cache'):
+            message._prefetched_objects_cache.pop('reactions', None)
         data = MessageSerializer(message).data
         _broadcast_channel(
             message.channel_id,
@@ -669,6 +688,7 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         consultation.status = ConsultationStatus.CONFIRMED
         consultation.confirmed_at = timezone.now()
         consultation.save(update_fields=['status', 'confirmed_at'])
+        audit(actor=request.user, action='consultation.confirmed', obj=consultation, request=request)
         return Response(self.get_serializer(consultation).data)
 
     @action(detail=True, methods=['post'])
@@ -676,6 +696,7 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         consultation = self.get_object()
         consultation.status = ConsultationStatus.CANCELLED
         consultation.save(update_fields=['status'])
+        audit(actor=request.user, action='consultation.cancelled', obj=consultation, request=request)
         return Response(self.get_serializer(consultation).data)
 
     @action(detail=True, methods=['post'])
@@ -708,6 +729,7 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             consultation.save(update_fields=['scheduled_time', 'status', 'confirmed_at'])
         else:
             consultation.save(update_fields=['scheduled_time'])
+        audit(actor=request.user, action='consultation.rescheduled', obj=consultation, request=request)
         return Response(self.get_serializer(consultation).data)
 
 
@@ -968,11 +990,373 @@ class TransactionsView(APIView):
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
+    """Throttled token endpoint with simple account lockout + optional 2FA.
+
+    After 5 failed attempts on the same email within 15 minutes the email is
+    refused with 423 (Locked) for the rest of that window.
+
+    If the resolved user has 2FA enabled, instead of returning tokens we
+    return {requires_2fa: true, challenge_token, method}; the caller must POST
+    /api/v1/auth/2fa/verify/ with that token + the code to receive tokens."""
+
     permission_classes = [AllowAny]
+    throttle_scope = 'auth'
+
+    LOCKOUT_THRESHOLD = 5
+    LOCKOUT_WINDOW_MINUTES = 15
+
+    def post(self, request, *args, **kwargs):
+        from .models import LoginAttempt, TwoFactorMethod
+        from .twofa import issue_challenge
+        from datetime import timedelta as _td
+
+        email = (request.data.get('email') or '').strip().lower()
+        ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+
+        if email:
+            window_start = timezone.now() - _td(minutes=self.LOCKOUT_WINDOW_MINUTES)
+            recent_failures = LoginAttempt.objects.filter(
+                email=email, succeeded=False, created_at__gte=window_start
+            ).count()
+            if recent_failures >= self.LOCKOUT_THRESHOLD:
+                return Response(
+                    {'detail': 'Account temporarily locked. Try again in a few minutes or reset your password.'},
+                    status=423,
+                )
+
+        try:
+            response = super().post(request, *args, **kwargs)
+        except Exception:
+            if email:
+                LoginAttempt.objects.create(email=email, ip_address=ip, succeeded=False)
+            raise
+
+        # Record the password-stage outcome before any 2FA branching.
+        if email:
+            LoginAttempt.objects.create(email=email, ip_address=ip, succeeded=response.status_code == 200)
+
+        if response.status_code != 200:
+            return response
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user and user.two_factor_method != TwoFactorMethod.OFF:
+            challenge = issue_challenge(user=user, method=user.two_factor_method)
+            return Response(
+                {
+                    'requires_2fa': True,
+                    'method': user.two_factor_method,
+                    'challenge_token': challenge.token,
+                    'detail': f'A code was sent via {user.two_factor_method}.',
+                },
+                status=status.HTTP_200_OK,
+            )
+        return response
+
+
+class TwoFactorVerifyView(APIView):
+    """Exchange a 2FA challenge token + code for JWTs."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        from .twofa import verify_challenge
+        from .models import OtpPurpose
+
+        token = request.data.get('challenge_token') or ''
+        code = request.data.get('code') or ''
+        try:
+            challenge = verify_challenge(token=token, code=code)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+        if challenge.purpose != OtpPurpose.LOGIN:
+            raise ValidationError('Wrong challenge type.')
+        user = challenge.user
+        refresh = RefreshToken.for_user(user)
+        audit(actor=user, action='auth.2fa_verified', obj=user, request=request)
+        return Response({'access': str(refresh.access_token), 'refresh': str(refresh)})
+
+
+class TwoFactorSetupView(APIView):
+    """Begin enabling 2FA — sends a code to the chosen method to confirm reach."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        from .twofa import issue_challenge
+        from .models import OtpPurpose, TwoFactorMethod
+
+        method = (request.data.get('method') or '').strip().lower()
+        if method not in {TwoFactorMethod.EMAIL, TwoFactorMethod.WHATSAPP}:
+            raise ValidationError('method must be "email" or "whatsapp".')
+        user = request.user
+        if method == TwoFactorMethod.WHATSAPP:
+            number = (request.data.get('whatsapp_number') or user.whatsapp_number or user.phone_number or '').strip()
+            if not number:
+                raise ValidationError('WhatsApp number is required.')
+            user.whatsapp_number = number
+            user.save(update_fields=['whatsapp_number'])
+        challenge = issue_challenge(user=user, method=method, purpose=OtpPurpose.SETUP)
+        return Response({'challenge_token': challenge.token, 'method': method})
+
+
+class TwoFactorConfirmSetupView(APIView):
+    """Verify the setup code and flip on 2FA for this user."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        from .twofa import verify_challenge
+        from .models import OtpPurpose
+
+        token = request.data.get('challenge_token') or ''
+        code = request.data.get('code') or ''
+        try:
+            challenge = verify_challenge(token=token, code=code)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+        if challenge.purpose != OtpPurpose.SETUP or challenge.user_id != request.user.id:
+            raise ValidationError('Wrong challenge.')
+        request.user.two_factor_method = challenge.method
+        request.user.save(update_fields=['two_factor_method'])
+        audit(actor=request.user, action='auth.2fa_enabled', obj=request.user, meta={'method': challenge.method}, request=request)
+        return Response({'two_factor_method': challenge.method})
+
+
+class TwoFactorDisableView(APIView):
+    """Disable 2FA. Requires a fresh code from the currently-active method."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        from .twofa import verify_challenge
+        from .models import TwoFactorMethod
+
+        if request.user.two_factor_method == TwoFactorMethod.OFF:
+            return Response({'two_factor_method': TwoFactorMethod.OFF})
+        token = request.data.get('challenge_token') or ''
+        code = request.data.get('code') or ''
+        try:
+            verify_challenge(token=token, code=code)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+        request.user.two_factor_method = TwoFactorMethod.OFF
+        request.user.save(update_fields=['two_factor_method'])
+        audit(actor=request.user, action='auth.2fa_disabled', obj=request.user, request=request)
+        return Response({'two_factor_method': TwoFactorMethod.OFF})
 
 
 class CustomTokenRefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
+    throttle_scope = 'auth'
+
+
+class RequestPasswordResetView(APIView):
+    """Email a password-reset link. Always returns 200 to avoid email enumeration."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            raise ValidationError('email is required.')
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            reset_url = f'{dj_settings.PASSWORD_RESET_URL}?uid={uid}&token={token}'
+            notify(
+                recipient=user,
+                kind=NotificationKind.GENERIC,
+                title='Reset your Attorney password',
+                body=(
+                    'We received a request to reset your password.\n\n'
+                    f'Use this link to choose a new one — it expires in 24 hours:\n{reset_url}\n\n'
+                    'If you did not request this, you can ignore this email.'
+                ),
+                link=reset_url,
+            )
+        return Response({'detail': 'If an account exists with that email, a reset link has been sent.'})
+
+
+class ConfirmPasswordResetView(APIView):
+    """Exchange a password-reset token + uid for a new password."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_decode
+
+        uid = request.data.get('uid') or ''
+        token = request.data.get('token') or ''
+        password = request.data.get('password') or ''
+        if not uid or not token:
+            raise ValidationError('uid and token are required.')
+        if len(password) < 8:
+            raise ValidationError('Password must be at least 8 characters.')
+        try:
+            user_id = int(urlsafe_base64_decode(uid).decode())
+        except (ValueError, UnicodeDecodeError):
+            raise ValidationError('Invalid reset link.')
+        user = User.objects.filter(pk=user_id, is_active=True).first()
+        if user is None or not default_token_generator.check_token(user, token):
+            raise ValidationError('Invalid or expired reset link.')
+        user.set_password(password)
+        user.save(update_fields=['password'])
+        refresh = RefreshToken.for_user(user)
+        return Response({'access': str(refresh.access_token), 'refresh': str(refresh)})
+
+
+class RequestEmailVerifyView(APIView):
+    """Send a verification email to the current user."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+
+        user = request.user
+        if user.email_verified:
+            return Response({'detail': 'Email already verified.'}, status=status.HTTP_200_OK)
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        verify_url = f'{dj_settings.EMAIL_VERIFY_URL}?uid={uid}&token={token}'
+        notify(
+            recipient=user,
+            kind=NotificationKind.GENERIC,
+            title='Verify your Attorney email',
+            body=(
+                f'Confirm that {user.email} is yours by clicking the link below:\n{verify_url}'
+            ),
+            link=verify_url,
+        )
+        return Response({'detail': 'Verification email sent.'})
+
+
+class ConfirmEmailVerifyView(APIView):
+    """Public endpoint — exchange a verification uid+token to flip email_verified."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_decode
+
+        uid = request.data.get('uid') or ''
+        token = request.data.get('token') or ''
+        try:
+            user_id = int(urlsafe_base64_decode(uid).decode())
+        except (ValueError, UnicodeDecodeError):
+            raise ValidationError('Invalid verification link.')
+        user = User.objects.filter(pk=user_id, is_active=True).first()
+        if user is None or not default_token_generator.check_token(user, token):
+            raise ValidationError('Invalid or expired verification link.')
+        if not user.email_verified:
+            user.email_verified = True
+            user.is_verified = True
+            user.save(update_fields=['email_verified', 'is_verified'])
+        return Response({'detail': 'Email verified.'})
+
+
+class ExportMyDataView(APIView):
+    """Return a JSON dump of everything we hold about the requesting user."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        from .serializers import (
+            UserSerializer,
+            MatterSerializer,
+            ConsultationSerializer,
+            MessageSerializer,
+            DocumentSerializer,
+            ReviewSerializer,
+            TimeEntrySerializer,
+            NotificationSerializer,
+            PaymentAccountSerializer,
+        )
+        from payments.serializers import PaymentSerializer
+
+        ctx = {'request': request}
+        my_matters = Matter.objects.filter(Q(client=user) | Q(lawyers=user)).distinct()
+        my_payment_accounts = PaymentAccount.objects.filter(owner_user=user)
+        my_payments = []
+        try:
+            from payments.models import Payment
+            my_payments = Payment.objects.filter(Q(payer=user) | Q(matter__client=user) | Q(matter__lawyers=user)).distinct()
+        except Exception:
+            pass
+
+        data = {
+            'exported_at': timezone.now().isoformat(),
+            'user': UserSerializer(user, context=ctx).data,
+            'matters': MatterSerializer(my_matters, many=True, context=ctx).data,
+            'consultations': ConsultationSerializer(
+                Consultation.objects.filter(Q(matter__client=user) | Q(matter__lawyers=user)).distinct(),
+                many=True,
+            ).data,
+            'messages': MessageSerializer(
+                Message.objects.filter(channel__members=user).distinct().order_by('created_at'),
+                many=True,
+            ).data,
+            'documents': DocumentSerializer(
+                Document.objects.filter(Q(matter__client=user) | Q(matter__lawyers=user)).distinct(),
+                many=True,
+            ).data,
+            'reviews': ReviewSerializer(Review.objects.filter(author=user), many=True).data,
+            'time_entries': TimeEntrySerializer(TimeEntry.objects.filter(lawyer=user), many=True).data,
+            'payment_accounts': PaymentAccountSerializer(my_payment_accounts, many=True).data,
+            'payments': PaymentSerializer(my_payments, many=True, context=ctx).data,
+            'notifications': NotificationSerializer(
+                Notification.objects.filter(recipient=user).order_by('-created_at'),
+                many=True,
+            ).data,
+        }
+        audit(actor=user, action='user.data_exported', obj=user, request=request)
+        return Response(data)
+
+
+class DeleteMyAccountView(APIView):
+    """Soft-delete the requesting user. They must POST {confirm: 'DELETE'}."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if request.data.get('confirm') != 'DELETE':
+            raise ValidationError("Type 'DELETE' to confirm.")
+        # Anonymise PII; preserve referential integrity (trust ledger etc).
+        original_email = user.email
+        user.email = f'deleted-{user.id}@deleted.attorney.local'
+        user.first_name = 'Deleted'
+        user.last_name = 'User'
+        user.phone_number = ''
+        if user.avatar:
+            user.avatar.delete(save=False)
+        user.avatar = None
+        user.is_active = False
+        user.save()
+        audit(actor=user, action='user.account_deleted', obj=user, meta={'original_email': original_email}, request=request)
+        return Response({'detail': 'Account deleted.'}, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):
@@ -998,6 +1382,7 @@ class AcceptInviteView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_scope = 'invite_accept'
 
     def get(self, request):
         token = request.query_params.get('token', '')
@@ -1096,6 +1481,7 @@ class PromoteFirmAdminView(APIView):
             raise PermissionDenied('Only the current firm admin can transfer admin.')
         firm.admin = target
         firm.save(update_fields=['admin'])
+        audit(actor=request.user, action='firm.admin_promoted', obj=firm, meta={'target_user_id': target.id}, request=request)
         notify(
             recipient=target,
             kind=NotificationKind.GENERIC,

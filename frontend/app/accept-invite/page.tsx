@@ -3,11 +3,19 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { auth_invite, ApiError, setTokens } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 
 export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={null}>
+      <AcceptInviteInner />
+    </Suspense>
+  );
+}
+
+function AcceptInviteInner() {
   const router = useRouter();
   const params = useSearchParams();
   const toast = useToast();

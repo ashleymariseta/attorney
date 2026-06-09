@@ -48,6 +48,7 @@ import PayInvoiceModal from '@/components/PayInvoiceModal';
 import { useToast } from '@/components/Toast';
 import { setRunning as setRunningStore, useRunningTimer } from '@/lib/timerStore';
 import { DraftRow, RejectPaymentModal, RescheduleModal } from '@/components/MatterModals';
+import { fireNotification, requestPermissionOnce } from '@/lib/browserNotify';
 import { useChannelSocket } from '@/lib/channelSocket';
 import { MessageCircle, Smile } from 'lucide-react';
 
@@ -604,6 +605,9 @@ export default function MatterRoomPage() {
   const [revs, setRevs] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState<DrawerTab | null>(null);
+  const [msgPage, setMsgPage] = useState(1);
+  const [msgHasMore, setMsgHasMore] = useState(false);
+  const [msgLoadingMore, setMsgLoadingMore] = useState(false);
 
   const docInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -612,7 +616,26 @@ export default function MatterRoomPage() {
   const isClient = !!me?.role?.startsWith('client');
   const channelId = matter?.channel_id ?? null;
 
-  const reloadMessages = useCallback(async (cid: number) => setMsgs((await messagesApi.listForChannel(cid)).results), []);
+  const reloadMessages = useCallback(async (cid: number) => {
+    // First page (newest 25), reverse to chronological for display.
+    const r = await messagesApi.listForChannelPage(cid, 1);
+    setMsgs([...r.results].reverse());
+    setMsgPage(1);
+    setMsgHasMore(!!r.next);
+  }, []);
+  const loadOlderMessages = useCallback(async () => {
+    if (!channelId || !msgHasMore || msgLoadingMore) return;
+    setMsgLoadingMore(true);
+    try {
+      const next = msgPage + 1;
+      const r = await messagesApi.listForChannelPage(channelId, next);
+      setMsgs((cur) => [...[...r.results].reverse(), ...cur]);
+      setMsgPage(next);
+      setMsgHasMore(!!r.next);
+    } finally {
+      setMsgLoadingMore(false);
+    }
+  }, [channelId, msgPage, msgHasMore, msgLoadingMore]);
   const reloadDocs = useCallback(async () => setDocs((await documentsApi.listForMatter(matterId)).results), [matterId]);
   const reloadPays = useCallback(async () => setPays((await paymentsApi.listForMatter(matterId)).results), [matterId]);
   const reloadTimes = useCallback(async () => setTimes((await timeApi.forMatter(matterId)).results), [matterId]);
@@ -646,7 +669,24 @@ export default function MatterRoomPage() {
     }
   }
 
-  if (loading) return <p className="p-8 text-sm text-muted">Loading room…</p>;
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-3">
+          <div className="h-9 w-9 animate-pulse rounded-full bg-line/70" />
+          <div className="space-y-2">
+            <div className="h-3 w-40 animate-pulse rounded bg-line/70" />
+            <div className="h-2 w-24 animate-pulse rounded bg-line/70" />
+          </div>
+        </div>
+        <div className="flex-1 space-y-3 bg-canvas/40 p-6">
+          <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-line/70" />
+          <div className="ml-auto h-12 w-1/2 animate-pulse rounded-2xl bg-line/70" />
+          <div className="h-20 w-3/4 animate-pulse rounded-2xl bg-line/70" />
+        </div>
+      </div>
+    );
+  }
   if (!matter) return <p className="p-8 text-sm text-muted">Matter not found.</p>;
 
   const otherParty = isClient
@@ -708,6 +748,9 @@ export default function MatterRoomPage() {
           onPaymentChange={() => reloadPays()}
           onConsultationChange={() => reloadConsultations()}
           attachActions={attachActions}
+          hasOlderMessages={msgHasMore}
+          loadingOlder={msgLoadingMore}
+          onLoadOlder={loadOlderMessages}
         />
       ) : (
         <p className="p-6 text-sm text-muted">No channel for this matter.</p>
@@ -762,6 +805,9 @@ function MessageThread({
   onPaymentChange,
   onConsultationChange,
   attachActions,
+  hasOlderMessages,
+  loadingOlder,
+  onLoadOlder,
 }: {
   timeline: TimelineItem[];
   meId?: number;
@@ -774,6 +820,9 @@ function MessageThread({
   onPaymentChange: () => void;
   onConsultationChange: () => void;
   attachActions: AttachAction[];
+  hasOlderMessages?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
 }) {
   const toast = useToast();
   const [text, setText] = useState('');
@@ -785,10 +834,27 @@ function MessageThread({
   const [threadParent, setThreadParent] = useState<Message | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Live updates — any chat event triggers a message reload.
-  useChannelSocket(channelId, (event) => {
+  // Ask once per browser; ignored after first decision.
+  useEffect(() => {
+    void requestPermissionOnce();
+  }, []);
+
+  // Live updates — any chat event triggers a message reload; new messages from
+  // someone else also fire a desktop notification when the tab is hidden.
+  const wsStatus = useChannelSocket(channelId, (event) => {
     if (event.kind === 'message.created' || event.kind === 'message.reaction') {
       onSent();
+    }
+    if (event.kind === 'message.created' && event.message?.sender?.id !== meId) {
+      const senderName = event.message?.sender?.full_name || 'Someone';
+      const preview = (event.message?.content || '').slice(0, 120);
+      fireNotification(`New message from ${senderName}`, {
+        body: preview,
+        tag: `matter-${matterId}`,
+        onClick: () => {
+          /* the page is already loaded; focusing the window is enough */
+        },
+      });
     }
   });
 
@@ -831,14 +897,50 @@ function MessageThread({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [timeline.length]);
 
+  // Optimistically appended pending messages — keyed by negative ids so they
+  // never collide with real server ids. WS broadcast removes them once the
+  // server-side row arrives.
+  const [pending, setPending] = useState<Message[]>([]);
+  // Reconcile: drop pending entries whose content now exists in the timeline.
+  useEffect(() => {
+    if (pending.length === 0) return;
+    setPending((cur) =>
+      cur.filter(
+        (p) =>
+          !timeline.some(
+            (item) =>
+              item.kind === 'message' &&
+              item.m.sender.id === p.sender.id &&
+              item.m.content === p.content
+          )
+      )
+    );
+    // We deliberately depend on timeline length to keep this cheap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline.length]);
+
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!text.trim()) return;
+    const body = text.trim();
+    if (!body) return;
     setSending(true);
+    const localId = -Date.now();
+    const optimistic: Message = {
+      id: localId,
+      channel: channelId,
+      sender: { id: meId ?? 0, email: '', first_name: '', last_name: '', full_name: 'You', role: '' },
+      content: body,
+      created_at: new Date().toISOString(),
+    } as Message;
+    setPending((cur) => [...cur, optimistic]);
+    setText('');
     try {
-      await messagesApi.send(channelId, text.trim());
-      setText('');
+      await messagesApi.send(channelId, body);
       onSent();
+    } catch {
+      // Restore the input on failure so the user doesn't lose their message.
+      setPending((cur) => cur.filter((p) => p.id !== localId));
+      setText(body);
     } finally {
       setSending(false);
     }
@@ -848,8 +950,28 @@ function MessageThread({
     <>
       <div className="relative min-h-0 flex-1 overflow-hidden bg-canvas">
         <ChatDoodles />
+        {wsStatus !== 'connected' && (
+          <div className="absolute inset-x-0 top-2 z-20 flex justify-center">
+            <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-900 shadow-sm">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+              {wsStatus === 'connecting' ? 'Connecting…' : 'Reconnecting — new messages may be delayed'}
+            </span>
+          </div>
+        )}
         <div className="absolute inset-0 overflow-y-auto">
           <div className="relative z-10 space-y-2 px-4 py-4 sm:px-8">
+          {hasOlderMessages && (
+            <div className="mx-auto w-fit">
+              <button
+                type="button"
+                onClick={onLoadOlder}
+                disabled={loadingOlder}
+                className="rounded-full border border-line bg-white/80 px-4 py-1 text-xs font-semibold text-brand-dark shadow-sm hover:border-brand hover:text-brand disabled:opacity-50"
+              >
+                {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
+              </button>
+            </div>
+          )}
           {timeline.length === 0 && (
             <p className="mx-auto mt-8 w-fit rounded-full bg-white/80 px-4 py-1.5 text-center text-xs text-muted shadow-sm">
               This is the start of your matter room — no email needed.
@@ -925,6 +1047,14 @@ function MessageThread({
               />
             );
           })}
+          {pending.map((p) => (
+            <div key={p.id} className="mt-2 flex justify-end opacity-60">
+              <div className="max-w-[78%] rounded-2xl rounded-br-md bg-brand-dark px-3 py-2 text-sm text-white shadow-sm">
+                <p className="whitespace-pre-wrap break-words">{p.content}</p>
+                <p className="mt-0.5 text-right text-[10px] text-white/60">Sending…</p>
+              </div>
+            </div>
+          ))}
             <div ref={bottomRef} />
           </div>
         </div>

@@ -2,8 +2,9 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { CalendarCheck } from 'lucide-react';
 import { auth, ApiError } from '@/lib/api';
 
 const ROLES = [
@@ -12,8 +13,24 @@ const ROLES = [
   ['lawyer', 'Lawyer'],
 ];
 
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/dashboard';
+  return raw;
+}
+
 export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterInner />
+    </Suspense>
+  );
+}
+
+function RegisterInner() {
   const router = useRouter();
+  const search = useSearchParams();
+  const next = safeNext(search.get('next'));
+  const isBookingFlow = next.startsWith('/book/');
   const [form, setForm] = useState({
     first_name: '',
     last_name: '',
@@ -34,14 +51,21 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await auth.register(form);
-      await auth.login(form.email, form.password);
-      router.push('/dashboard');
+      const res = await auth.login(form.email, form.password);
+      // Fresh accounts can't have 2FA on yet, so login returns tokens directly.
+      if ('requires_2fa' in res && res.requires_2fa) {
+        router.push(`/login?next=${encodeURIComponent(next)}`);
+        return;
+      }
+      router.push(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Registration failed');
     } finally {
       setLoading(false);
     }
   }
+
+  const loginHref = next !== '/dashboard' ? `/login?next=${encodeURIComponent(next)}` : '/login';
 
   return (
     <main className="grid min-h-screen lg:grid-cols-2">
@@ -62,7 +86,20 @@ export default function RegisterPage() {
               className="h-16 w-auto"
             />
           </Link>
-          <h1 className="mt-8 text-2xl font-bold">Create your account</h1>
+          {isBookingFlow && (
+            <div className="mt-8 flex items-start gap-3 rounded-2xl border border-brand-light/30 bg-brand-light/10 p-4 text-sm">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-dark text-white">
+                <CalendarCheck size={18} />
+              </span>
+              <div className="text-brand-dark">
+                <p className="font-semibold">One quick sign-up to finish booking</p>
+                <p className="text-xs text-brand-dark/80">
+                  We&rsquo;ll take you straight to the consultation screen as soon as your account is ready.
+                </p>
+              </div>
+            </div>
+          )}
+          <h1 className="mt-6 text-2xl font-bold">Create your account</h1>
 
           <form onSubmit={onSubmit} className="mt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -98,7 +135,7 @@ export default function RegisterPage() {
 
           <p className="mt-6 text-sm text-muted">
             Already registered?{' '}
-            <Link href="/login" className="font-semibold text-brand underline underline-offset-2">Log in</Link>
+            <Link href={loginHref} className="font-semibold text-brand underline underline-offset-2">Log in</Link>
           </p>
         </div>
       </div>

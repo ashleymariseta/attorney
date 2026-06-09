@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getAccess } from '@/lib/api';
+
+export type ChannelStatus = 'connecting' | 'connected' | 'disconnected';
 
 export interface ChannelEvent {
   kind: 'message.created' | 'message.reaction';
@@ -21,12 +23,16 @@ function wsBase(): string {
 export function useChannelSocket(
   channelId: number | null,
   onEvent: (event: ChannelEvent) => void
-): void {
+): ChannelStatus {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const [status, setStatus] = useState<ChannelStatus>('connecting');
 
   useEffect(() => {
-    if (!channelId) return;
+    if (!channelId) {
+      setStatus('disconnected');
+      return;
+    }
     let socket: WebSocket | null = null;
     let attempt = 0;
     let closed = false;
@@ -35,12 +41,14 @@ export function useChannelSocket(
 
     function connect() {
       if (closed) return;
+      setStatus('connecting');
       const token = getAccess() ?? '';
       const url = `${wsBase()}/ws/channel/${channelId}/?token=${encodeURIComponent(token)}`;
       socket = new WebSocket(url);
 
       socket.onopen = () => {
         attempt = 0;
+        setStatus('connected');
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = setInterval(() => {
           try {
@@ -59,6 +67,7 @@ export function useChannelSocket(
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = null;
         if (closed) return;
+        setStatus('disconnected');
         attempt += 1;
         const delay = Math.min(30_000, 500 * Math.pow(2, attempt));
         reconnectTimer = setTimeout(connect, delay);
@@ -73,9 +82,12 @@ export function useChannelSocket(
 
     return () => {
       closed = true;
+      setStatus('disconnected');
       if (pingTimer) clearInterval(pingTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       try { socket?.close(); } catch {}
     };
   }, [channelId]);
+
+  return status;
 }

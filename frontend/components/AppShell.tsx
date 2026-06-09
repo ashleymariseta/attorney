@@ -3,8 +3,11 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Calendar, Clock, GraduationCap, Home, Menu, Plus, Search, Settings, Wallet, X } from 'lucide-react';
+import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, Sparkles, Wallet, X } from 'lucide-react';
 import CreateMatterModal from '@/components/CreateMatterModal';
+import NotificationBell from '@/components/NotificationBell';
+import { emailVerify, ApiError } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 import {
   createContext,
   useCallback,
@@ -41,6 +44,24 @@ export function useApp(): AppData {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error('useApp must be used within AppShell');
   return ctx;
+}
+
+/** Safe variant for components that may be rendered outside the AppShell
+ * (e.g. BookModal on the public lawyers page). Reloaders become no-ops. */
+export function useAppOptional(): AppData {
+  const ctx = useContext(Ctx);
+  if (ctx) return ctx;
+  const noop = async () => {};
+  return {
+    me: null,
+    matters: [],
+    retainers: [],
+    consultations: [],
+    reloadMe: noop,
+    reloadMatters: noop,
+    reloadRetainers: noop,
+    reloadConsultations: noop,
+  };
 }
 
 function initials(u: User | null) {
@@ -124,6 +145,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
   };
 
+  const subNavItem = (href: string, label: string, icon: React.ReactNode) => {
+    const active = pathname === href;
+    return (
+      <Link
+        href={href}
+        className={`ml-7 flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition ${
+          active
+            ? 'bg-brand-light/30 font-semibold text-brand-darker'
+            : 'text-ink/70 hover:bg-canvas hover:text-ink'
+        }`}
+      >
+        <span className="opacity-70">{icon}</span>
+        {label}
+      </Link>
+    );
+  };
+
   const sidebar = (
     <div className="flex h-full w-64 flex-col border-r border-line bg-white text-ink">
       <div className="flex items-center gap-2.5 border-b border-line px-4 py-4">
@@ -143,10 +181,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Primary nav — desktop only; on mobile the bottom strip handles these. */}
       <nav className="hidden space-y-1 px-2 py-3 md:block">
         {navItem('/dashboard', 'Dashboard', <Home size={16} />)}
+        {isClient && navItem('/lawyers', 'Find a lawyer', <Search size={16} />)}
         {isClient && navItem('/my-lawyers', 'My Legal Team', <GraduationCap size={16} />)}
         {navItem('/bookings', isLawyer ? 'Bookings' : 'My Bookings', <Calendar size={16} />, pendingBookings)}
         {isLawyer && navItem('/billables', 'Billables', <Clock size={16} />)}
         {navItem('/transactions', 'Transactions', <Wallet size={16} />)}
+        {isLawyer && (
+          <AIWorkflowsGroup
+            pathname={pathname}
+            subNavItem={subNavItem}
+          />
+        )}
       </nav>
       {/* Always visible — Settings & Matters live in the hamburger on mobile. */}
       <nav className="space-y-1 px-2 pt-3 md:pt-0">
@@ -233,6 +278,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <p className="truncate text-sm font-medium">{me?.first_name} {me?.last_name}</p>
             <p className="truncate text-[11px] text-muted">{me?.email}</p>
           </div>
+          <NotificationBell />
         </div>
         <button onClick={onLogout} className="mt-2 w-full rounded-md border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-canvas">Log out</button>
       </div>
@@ -261,7 +307,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               height={66}
               className="h-10 w-auto"
             />
+            <div className="ml-auto">
+              <NotificationBell />
+            </div>
           </header>
+          <EmailVerifyBanner me={me} />
           <main className="min-h-0 flex-1 overflow-y-auto pb-2 md:pb-0">{children}</main>
           <MobileNavStrip
             pathname={pathname}
@@ -278,6 +328,59 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         />
       )}
     </Ctx.Provider>
+  );
+}
+
+function EmailVerifyBanner({ me }: { me: User | null }) {
+  const toast = useToast();
+  const [dismissed, setDismissed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!me) return null;
+  if (me.email_verified) return null;
+  if (dismissed) return null;
+  // Skip the banner on placeholder invite-email accounts that haven't claimed
+  // a real address yet.
+  if (me.email?.includes('@invite.attorney.local')) return null;
+
+  async function resend() {
+    setBusy(true);
+    try {
+      await emailVerify.request();
+      toast.success('Verification email sent. Check your inbox.', { major: true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not send verification email.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-amber-900">
+      <div className="flex min-w-0 items-center gap-2 text-xs">
+        <Mail size={14} className="shrink-0" />
+        <span className="truncate">
+          Your email <span className="font-semibold">{me.email}</span> isn&apos;t verified yet.
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={resend}
+          disabled={busy}
+          className="rounded-md bg-amber-900 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+        >
+          {busy ? 'Sending…' : 'Send link'}
+        </button>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={() => setDismissed(true)}
+          className="rounded-md p-1 text-amber-900/70 hover:bg-amber-100"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -338,6 +441,44 @@ function MobileNavStrip({
         );
       })}
     </nav>
+  );
+}
+
+function AIWorkflowsGroup({
+  pathname,
+  subNavItem,
+}: {
+  pathname: string;
+  subNavItem: (href: string, label: string, icon: React.ReactNode) => React.ReactNode;
+}) {
+  const groupActive = pathname.startsWith('/ai-workflows');
+  const [open, setOpen] = useState(groupActive);
+  // Keep the group expanded whenever a child route is active.
+  useEffect(() => {
+    if (groupActive) setOpen(true);
+  }, [groupActive]);
+
+  return (
+    <div className="pt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`side-link w-full ${groupActive ? 'side-link-active' : ''}`}
+      >
+        <span className="opacity-80"><BrainCircuit size={16} /></span>
+        <span className="flex-1 text-left">AI Workflows</span>
+        {open ? <ChevronDown size={14} className="opacity-60" /> : <ChevronRight size={14} className="opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-0.5">
+          {subNavItem('/ai-workflows', 'My Workflows', <Sparkles size={13} />)}
+          {subNavItem('/ai-workflows/ai-researcher', 'AI-Researcher', <BookText size={13} />)}
+          {subNavItem('/ai-workflows/templates', 'Templates', <FileText size={13} />)}
+          {subNavItem('/ai-workflows/providers', 'Providers', <KeyRound size={13} />)}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -25,6 +25,7 @@ import {
   type Payment,
   type PaymentAccount,
 } from '@/lib/api';
+import { useEscape } from '@/lib/useEscape';
 
 const PAY_METHODS: Array<{ value: string; label: string; icon: LucideIcon; sub: string }> = [
   { value: 'ecocash', label: 'EcoCash', icon: Smartphone, sub: 'Mobile money' },
@@ -46,6 +47,7 @@ export default function PayInvoiceModal({
   onClose: () => void;
   onPaid: () => void;
 }) {
+  useEscape(onClose);
   const [stage, setStage] = useState<Stage>('method');
   const [method, setMethod] = useState('ecocash');
   const [reference, setReference] = useState('');

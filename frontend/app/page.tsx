@@ -6,7 +6,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-white text-ink">
       <header className="sticky top-0 z-30 border-b border-line/70 bg-white/80 backdrop-blur">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-2">
           <Link href="/" className="flex items-center" aria-label="Attorney — Law & Advisory">
             <Image
               src="/img/logos/logo-horizontal-teal.png"
@@ -14,7 +14,7 @@ export default function Home() {
               width={260}
               height={86}
               priority
-              className="h-14 w-auto"
+              className="h-16 w-auto"
             />
           </Link>
           <div className="hidden items-center gap-7 text-sm text-ink/70 md:flex">
@@ -23,12 +23,13 @@ export default function Home() {
             <a href="#trust" className="hover:text-ink">Trust &amp; safety</a>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <Link href="/login" className="rounded-lg px-3 py-2 text-ink/80 hover:text-ink">Log in</Link>
+            <Link href="/login" className="hidden rounded-lg px-3 py-1.5 text-ink/80 hover:text-ink sm:inline-flex">Log in</Link>
             <Link
-              href="/register"
-              className="rounded-lg bg-brand-dark px-4 py-2 font-semibold text-white shadow-sm hover:bg-brand"
+              href="/lawyers"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3.5 py-1.5 font-semibold text-white shadow-sm hover:bg-brand"
             >
-              Get started
+              Find a lawyer
+              <ArrowRightIcon />
             </Link>
           </div>
         </nav>
@@ -92,14 +93,21 @@ export default function Home() {
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
+                href="/lawyers"
+                className="inline-flex items-center gap-2 rounded-lg bg-brand-dark px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand"
+              >
+                Find a lawyer
+                <ArrowRightIcon />
+              </Link>
+              <Link
                 href="/register"
-                className="rounded-lg bg-brand-dark px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand"
+                className="rounded-lg border border-line bg-white px-5 py-3 text-sm font-semibold text-ink hover:border-brand hover:text-brand"
               >
                 Create an account
               </Link>
               <Link
                 href="/login"
-                className="rounded-lg border border-line bg-white px-5 py-3 text-sm font-semibold text-ink hover:border-brand hover:text-brand"
+                className="text-sm font-semibold text-muted hover:text-ink"
               >
                 Log in
               </Link>
@@ -332,16 +340,17 @@ export default function Home() {
             </div>
             <div className="flex flex-wrap gap-3 lg:justify-end">
               <Link
-                href="/register"
-                className="rounded-lg bg-white px-5 py-3 text-sm font-semibold text-brand-darker hover:bg-brand-light hover:text-brand-darker"
+                href="/lawyers"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-5 py-3 text-sm font-semibold text-brand-darker hover:bg-brand-light hover:text-brand-darker"
               >
-                Create an account
+                Find a lawyer
+                <ArrowRightIcon />
               </Link>
               <Link
-                href="/login"
+                href="/register"
                 className="rounded-lg border border-white/30 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10"
               >
-                Log in
+                Create an account
               </Link>
             </div>
           </div>
@@ -351,10 +360,23 @@ export default function Home() {
       <footer className="border-t border-line">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-xs text-muted sm:flex-row">
           <p>© {new Date().getFullYear()} Attorney. All rights reserved.</p>
-          <p>Verified legal counsel, on demand.</p>
+          <nav className="flex items-center gap-4">
+            <Link href="/lawyers" className="hover:text-ink">Find a lawyer</Link>
+            <Link href="/terms" className="hover:text-ink">Terms</Link>
+            <Link href="/privacy" className="hover:text-ink">Privacy</Link>
+          </nav>
         </div>
       </footer>
     </main>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
   );
 }
 

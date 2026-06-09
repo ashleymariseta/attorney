@@ -12,6 +12,7 @@ import {
   type Payment,
 } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { useEscape } from '@/lib/useEscape';
 
 export function RejectPaymentModal({
   payment,
@@ -22,6 +23,7 @@ export function RejectPaymentModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  useEscape(onClose);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -82,6 +84,7 @@ export function RescheduleModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  useEscape(onClose);
   const initial = (() => {
     const d = new Date(consultation.scheduled_time);
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -194,6 +197,7 @@ function SignatureModal({
   onClose: () => void;
   onSigned: () => void;
 }) {
+  useEscape(onClose);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [busy, setBusy] = useState(false);
   const [drawing, setDrawing] = useState(false);

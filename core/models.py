@@ -2,6 +2,8 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.db import models
 from django.utils import timezone
 
+from .validators import validate_avatar, validate_doc
+
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -35,13 +37,24 @@ class UserRole(models.TextChoices):
     ADMIN = 'admin', 'Platform Admin'
 
 
+class TwoFactorMethod(models.TextChoices):
+    OFF = 'off', 'Off'
+    EMAIL = 'email', 'Email'
+    WHATSAPP = 'whatsapp', 'WhatsApp'
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=120)
     last_name = models.CharField(max_length=120)
     phone_number = models.CharField(max_length=32, blank=True)
+    whatsapp_number = models.CharField(max_length=32, blank=True)
     role = models.CharField(max_length=32, choices=UserRole.choices, default=UserRole.CLIENT_INDIVIDUAL)
-    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True, validators=[validate_avatar])
+    email_verified = models.BooleanField(default=False)
+    two_factor_method = models.CharField(
+        max_length=16, choices=TwoFactorMethod.choices, default=TwoFactorMethod.OFF
+    )
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
@@ -70,6 +83,8 @@ class Firm(models.Model):
     admin = models.ForeignKey(
         'core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='admin_of_firms'
     )
+    # ISO 3166-1 alpha-2 (e.g. "ZW", "ZA"). Used for the country flag badge.
+    country = models.CharField(max_length=2, blank=True)
     default_hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     default_consultation_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     verified = models.BooleanField(default=False)
@@ -121,7 +136,9 @@ class LawyerProfile(models.Model):
     bar_number = models.CharField(max_length=64, blank=True)
     practising_certificate_number = models.CharField(max_length=64, blank=True)
     practising_certificate_expires = models.DateField(null=True, blank=True)
-    practising_certificate_file = models.FileField(upload_to='certs/', null=True, blank=True)
+    practising_certificate_file = models.FileField(upload_to='certs/', null=True, blank=True, validators=[validate_doc])
+    # ISO 3166-1 alpha-2 (e.g. "ZW", "ZA"). Used for the country flag badge.
+    country = models.CharField(max_length=2, blank=True)
     jurisdictions = models.JSONField(default=list, blank=True)
     practice_areas = models.JSONField(default=list, blank=True)
     languages = models.JSONField(default=list, blank=True)
@@ -156,7 +173,7 @@ class ClientProfile(models.Model):
     kyc_status = models.CharField(max_length=16, choices=KycStatus.choices, default=KycStatus.UNVERIFIED)
     id_document_type = models.CharField(max_length=24, choices=IdDocumentType.choices, blank=True)
     id_document_number = models.CharField(max_length=64, blank=True)
-    id_document_file = models.FileField(upload_to='kyc/', null=True, blank=True)
+    id_document_file = models.FileField(upload_to='kyc/', null=True, blank=True, validators=[validate_doc])
     documents = models.JSONField(default=list, blank=True)
 
     def __str__(self):
@@ -360,7 +377,7 @@ class Document(models.Model):
     uploader = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, related_name='uploaded_documents')
     title = models.CharField(max_length=240)
     kind = models.CharField(max_length=16, choices=DocumentKind.choices, default=DocumentKind.DOCUMENT)
-    file = models.FileField(upload_to=matter_document_path, null=True, blank=True)
+    file = models.FileField(upload_to=matter_document_path, null=True, blank=True, validators=[validate_doc])
     body = models.TextField(blank=True, help_text='Inline draft content (for drafts without a file).')
     version = models.PositiveIntegerField(default=1)
     signed_by = models.ForeignKey(
@@ -410,6 +427,58 @@ class Notification(models.Model):
     link = models.CharField(max_length=240, blank=True)
     sent_email = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class AuditEvent(models.Model):
+    """Append-only record of who did what to what, when. For trust & compliance."""
+
+    actor = models.ForeignKey(
+        'core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='audit_events'
+    )
+    action = models.CharField(max_length=64)  # e.g. 'consultation.confirmed', 'payment.verified'
+    object_type = models.CharField(max_length=64, blank=True)
+    object_id = models.PositiveBigIntegerField(null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['action', '-created_at']), models.Index(fields=['actor', '-created_at'])]
+
+
+class LoginAttempt(models.Model):
+    """Tracks failed logins per email so we can lock accounts after N failures."""
+
+    email = models.CharField(max_length=254, db_index=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    succeeded = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class OtpPurpose(models.TextChoices):
+    LOGIN = 'login', '2FA login'
+    SETUP = 'setup', '2FA setup'
+
+
+class OtpChallenge(models.Model):
+    """A one-time code we sent via email/WhatsApp. Stored as sha256(code+salt)."""
+
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='otp_challenges')
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    code_hash = models.CharField(max_length=128)
+    method = models.CharField(max_length=16, choices=TwoFactorMethod.choices)
+    purpose = models.CharField(max_length=16, choices=OtpPurpose.choices, default=OtpPurpose.LOGIN)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

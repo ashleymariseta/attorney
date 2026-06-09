@@ -27,8 +27,9 @@ import {
 import { useRouter } from 'next/navigation';
 import { useMemo, useRef, useState } from 'react';
 import { matters, payments, ApiError, type Lawyer } from '@/lib/api';
-import { useApp } from '@/components/AppShell';
+import { useAppOptional } from '@/components/AppShell';
 import { useToast } from '@/components/Toast';
+import { useEscape } from '@/lib/useEscape';
 
 const DURATIONS = [15, 30, 45, 60, 90, 120];
 
@@ -55,11 +56,12 @@ const STAGE_LABELS = ['Matter', 'Schedule', 'Payment'] as const;
 
 export default function BookModal({ lawyer, onClose }: { lawyer: Lawyer; onClose: () => void }) {
   const router = useRouter();
-  const { reloadMatters, reloadConsultations } = useApp();
+  const { reloadMatters, reloadConsultations } = useAppOptional();
   const toast = useToast();
   const onRetainer = lawyer.on_retainer;
   const rate = lawyer.hourly_rate ? Number(lawyer.hourly_rate) : 0;
 
+  useEscape(onClose);
   const [step, setStep] = useState<Step>('form');
   const [stage, setStage] = useState<FormStage>(0);
 

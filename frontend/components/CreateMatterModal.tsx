@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, matters as mattersApi, type LawyerClient } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { useEscape } from '@/lib/useEscape';
 
 export default function CreateMatterModal({
   onClose,
@@ -26,6 +27,7 @@ export default function CreateMatterModal({
 }) {
   const router = useRouter();
   const toast = useToast();
+  useEscape(onClose);
   const [clients, setClients] = useState<LawyerClient[]>([]);
   const [loadingClients, setLoadingClients] = useState(true);
 

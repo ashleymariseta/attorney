@@ -60,6 +60,7 @@ export default function TransactionsPage() {
   const [rejecting, setRejecting] = useState<Transaction | null>(null);
   const [detailTx, setDetailTx] = useState<Transaction | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
 
   const isAdmin = !!me && (me.role === 'admin' || (me as any).is_staff || (me as any).is_superuser);
 
@@ -110,6 +111,17 @@ export default function TransactionsPage() {
     }
   }
 
+  const filteredItems = items.filter((t) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      t.matter_title.toLowerCase().includes(q) ||
+      t.label.toLowerCase().includes(q) ||
+      t.status_display.toLowerCase().includes(q) ||
+      t.amount.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <h1 className="text-2xl font-bold">Transactions</h1>
@@ -121,7 +133,37 @@ export default function TransactionsPage() {
         <Stat label="Transactions" value={items.length} icon={Receipt} />
       </div>
 
-      <div className="mt-8 overflow-x-auto rounded-xl border border-line bg-surface">
+      <div className="mt-6 flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2">
+        <svg
+          aria-hidden
+          className="h-4 w-4 text-muted"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search matter, type, status or amount…"
+          className="w-full bg-transparent text-sm placeholder:text-muted focus:outline-none"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            aria-label="Clear search"
+            className="text-muted hover:text-ink"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-brand-dark text-left text-[10px] font-semibold uppercase tracking-wide text-white">
             <tr>
@@ -141,14 +183,14 @@ export default function TransactionsPage() {
                 </td>
               </tr>
             )}
-            {!loading && items.length === 0 && (
+            {!loading && filteredItems.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-muted">
-                  No transactions yet.
+                  {query ? `No matches for "${query}".` : 'No transactions yet.'}
                 </td>
               </tr>
             )}
-            {items.map((t) => {
+            {filteredItems.map((t) => {
               const isPayment = t.kind === 'payment';
               const isPending = /pending|awaiting/i.test(t.status);
               const isInvoice = t.purpose === 'invoice';

@@ -24,6 +24,7 @@ LAWYERS = [
         'first_name': 'Amara',
         'last_name': 'Dube',
         'practice_areas': ['Commercial', 'Contracts', 'Corporate'],
+        'country': 'ZW',
         'jurisdictions': ['Zimbabwe', 'South Africa'],
         'languages': ['English', 'Shona'],
         'years_experience': 11,
@@ -36,6 +37,7 @@ LAWYERS = [
         'first_name': 'Tendai',
         'last_name': 'Moyo',
         'practice_areas': ['Family', 'Divorce', 'Estates', 'Wills'],
+        'country': 'ZW',
         'jurisdictions': ['Zimbabwe'],
         'languages': ['English', 'Ndebele'],
         'years_experience': 7,
@@ -48,6 +50,7 @@ LAWYERS = [
         'first_name': 'Naledi',
         'last_name': 'Khumalo',
         'practice_areas': ['Labour', 'Employment', 'Disputes'],
+        'country': 'BW',
         'jurisdictions': ['Zimbabwe', 'Botswana'],
         'languages': ['English', 'Setswana'],
         'years_experience': 14,
@@ -60,6 +63,7 @@ LAWYERS = [
         'first_name': 'Farai',
         'last_name': 'Ncube',
         'practice_areas': ['Property', 'Conveyancing', 'Notary', 'Leases'],
+        'country': 'ZW',
         'jurisdictions': ['Zimbabwe'],
         'languages': ['English'],
         'years_experience': 9,
@@ -88,6 +92,7 @@ class Command(BaseCommand):
                 'description': 'Commercial, conveyancing and notarial work across Zimbabwe & SA.',
                 'default_hourly_rate': Decimal('180.00'),
                 'default_consultation_price': Decimal('60.00'),
+                'country': 'ZW',
             },
             {
                 'name': 'Moyo Khumalo Inc.', 'slug': 'moyo-khumalo',
@@ -95,6 +100,7 @@ class Command(BaseCommand):
                 'description': 'Labour, family and estate planning practice.',
                 'default_hourly_rate': Decimal('150.00'),
                 'default_consultation_price': Decimal('50.00'),
+                'country': 'ZA',
             },
         ]
         firms = []
@@ -123,6 +129,7 @@ class Command(BaseCommand):
                 user.save()
             profile, _ = LawyerProfile.objects.get_or_create(user=user)
             profile.practice_areas = data['practice_areas']
+            profile.country = data.get('country', '')
             profile.jurisdictions = data['jurisdictions']
             profile.languages = data['languages']
             profile.years_experience = data['years_experience']

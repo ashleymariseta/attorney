@@ -38,13 +38,15 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Firm)
 class FirmAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'verified', 'created_at')
+    list_display = ('name', 'slug', 'country', 'verified', 'created_at')
+    list_filter = ('country', 'verified')
     search_fields = ('name', 'slug')
 
 
 @admin.register(LawyerProfile)
 class LawyerProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'firm', 'bar_number', 'verified_at')
+    list_display = ('user', 'firm', 'country', 'bar_number', 'verified_at')
+    list_filter = ('country',)
     search_fields = ('user__email', 'bar_number')
 
 

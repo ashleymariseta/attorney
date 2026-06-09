@@ -35,6 +35,7 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
             'bar_number',
             'practising_certificate_number',
             'practising_certificate_expires',
+            'country',
             'jurisdictions',
             'practice_areas',
             'languages',
@@ -106,17 +107,23 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'phone_number',
+            'whatsapp_number',
             'role',
             'avatar',
             'avatar_url',
             'is_staff',
             'is_active',
             'is_verified',
+            'email_verified',
+            'two_factor_method',
             'date_joined',
             'lawyer_profile',
             'client_profile',
         ]
-        read_only_fields = ['is_staff', 'is_active', 'is_verified', 'date_joined', 'avatar_url']
+        read_only_fields = [
+            'is_staff', 'is_active', 'is_verified', 'email_verified', 'two_factor_method',
+            'date_joined', 'avatar_url',
+        ]
         extra_kwargs = {'avatar': {'write_only': True, 'required': False}}
 
     def get_avatar_url(self, obj):
@@ -135,6 +142,7 @@ class LawyerCardSerializer(serializers.ModelSerializer):
     profile = LawyerProfileSerializer(source='lawyer_profile', read_only=True)
     on_retainer = serializers.SerializerMethodField()
     hourly_rate = serializers.SerializerMethodField()
+    country = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
 
@@ -142,7 +150,7 @@ class LawyerCardSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name', 'is_verified',
-            'profile', 'on_retainer', 'hourly_rate', 'avg_rating', 'review_count',
+            'profile', 'on_retainer', 'hourly_rate', 'country', 'avg_rating', 'review_count',
         ]
 
     def get_full_name(self, obj):
@@ -156,12 +164,23 @@ class LawyerCardSerializer(serializers.ModelSerializer):
         profile = getattr(obj, 'lawyer_profile', None)
         return str(profile.hourly_rate) if profile and profile.hourly_rate is not None else None
 
+    def get_country(self, obj):
+        profile = getattr(obj, 'lawyer_profile', None)
+        return (profile.country or '') if profile else ''
+
     def get_avg_rating(self, obj):
         val = getattr(obj, 'avg_rating', None)
         return round(float(val), 1) if val is not None else None
 
     def get_review_count(self, obj):
         return getattr(obj, 'review_count', 0) or 0
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not (request and getattr(request.user, 'is_authenticated', False)):
+            data.pop('email', None)
+        return data
 
 
 class FirmCardSerializer(serializers.ModelSerializer):
@@ -176,7 +195,7 @@ class FirmCardSerializer(serializers.ModelSerializer):
         from .models import Firm
         model = Firm
         fields = [
-            'id', 'name', 'slug', 'website', 'verified',
+            'id', 'name', 'slug', 'website', 'verified', 'country',
             'description', 'admin', 'default_hourly_rate', 'default_consultation_price',
             'lawyer_count', 'practice_areas', 'jurisdictions', 'starting_rate',
         ]
@@ -361,7 +380,7 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
         fields = [
             'bar_number', 'practising_certificate_number', 'practising_certificate_expires',
             'practising_certificate_file', 'practising_certificate_file_url',
-            'jurisdictions', 'practice_areas', 'languages',
+            'country', 'jurisdictions', 'practice_areas', 'languages',
             'years_experience', 'hourly_rate', 'consultation_price', 'bio',
             'firm', 'firm_detail',
         ]
