@@ -1,6 +1,6 @@
 'use client';
 
-import { CalendarClock, Check, ThumbsDown, X } from 'lucide-react';
+import { CalendarClock, Check, Clock, MessageSquare, ThumbsDown, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   consultations as consultationsApi,
@@ -13,6 +13,8 @@ import {
 } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { useEscape } from '@/lib/useEscape';
+import { useAppOptional } from '@/components/AppShell';
+import DateField from '@/components/DateField';
 
 export function RejectPaymentModal({
   payment,
@@ -85,20 +87,29 @@ export function RescheduleModal({
   onDone: () => void;
 }) {
   useEscape(onClose);
-  const initial = (() => {
-    const d = new Date(consultation.scheduled_time);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  })();
-  const [when, setWhen] = useState(initial);
+  const { me } = useAppOptional();
+  const isLawyer = me?.role === 'lawyer';
+  const notePlaceholder = isLawyer
+    ? 'e.g. Conflict with a court appearance — proposing this new slot.'
+    : 'e.g. Something came up at work — can we move it to this time?';
+  const [when, setWhen] = useState(consultation.scheduled_time);
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  const currentDate = new Date(consultation.scheduled_time);
+  const newDate = when ? new Date(when) : null;
+  const changed = newDate ? newDate.getTime() !== currentDate.getTime() : false;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!when) return;
+    if (!when) {
+      setError('Pick a new date and time.');
+      return;
+    }
     setBusy(true);
     try {
-      await consultationsApi.reschedule(consultation.id, new Date(when).toISOString());
+      await consultationsApi.reschedule(consultation.id, new Date(when).toISOString(), note.trim());
       onDone();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reschedule.');
@@ -106,36 +117,112 @@ export function RescheduleModal({
       setBusy(false);
     }
   }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
-        <div className="flex items-center justify-between bg-brand px-5 py-4 text-white">
-          <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
-              <CalendarClock size={18} />
+      <div className="absolute inset-0 bg-brand-darker/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-line bg-gradient-to-br from-brand-dark to-brand px-4 py-3 text-white">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-white/15 ring-1 ring-inset ring-white/25">
+              <CalendarClock size={16} />
             </span>
-            <h3 className="text-base font-bold">Reschedule consultation</h3>
+            <div>
+              <h3 className="text-sm font-bold leading-tight">Reschedule consultation</h3>
+              <p className="text-[11px] text-white/80">
+                {consultation.matter_title} · {consultation.duration_minutes} min · {consultation.mode_display}
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white">
-            <X size={18} />
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1 text-white/80 transition hover:bg-white/15 hover:text-white"
+          >
+            <X size={14} />
           </button>
         </div>
-        <form onSubmit={submit} className="space-y-3 p-5">
-          <p className="text-xs text-muted">
-            Currently {new Date(consultation.scheduled_time).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}.
-            Pick a new time — the other party will need to re-confirm.
-          </p>
-          <label className="label">New time</label>
-          <input type="datetime-local" className="field" value={when} onChange={(e) => setWhen(e.target.value)} required />
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <button
-            disabled={busy}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand disabled:opacity-50"
-          >
-            {busy ? 'Saving…' : 'Reschedule'}
-            {!busy && <Check size={16} />}
-          </button>
+
+        <form onSubmit={submit} className="space-y-3 p-4 text-xs">
+          {/* Old / new visual */}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg border border-line bg-canvas p-2.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted">Currently</p>
+              <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-ink">
+                <Clock size={11} className="text-muted" />
+                {currentDate.toLocaleString([], {
+                  weekday: 'short',
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false,
+                })}
+              </p>
+            </div>
+            <div className={`rounded-lg border p-2.5 ${changed ? 'border-brand bg-brand-light/15' : 'border-dashed border-line bg-canvas'}`}>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-brand-dark">New time</p>
+              <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-ink">
+                <Clock size={11} className="text-brand-dark" />
+                {newDate
+                  ? newDate.toLocaleString([], {
+                      weekday: 'short',
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    })
+                  : '—'}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="label flex items-center gap-1 text-[10px]">
+              <CalendarClock size={11} /> Pick the new date &amp; time
+            </label>
+            <DateField mode="datetime" value={when} onChange={setWhen} minuteStep={15} />
+            <p className="mt-1 text-[10px] text-muted">The other party will need to re-confirm the new slot.</p>
+          </div>
+
+          <div>
+            <label className="label flex items-center gap-1 text-[10px]">
+              <MessageSquare size={11} /> Note for the other party
+              <span className="ml-1 font-normal text-muted">(optional)</span>
+            </label>
+            <textarea
+              className="field text-xs"
+              rows={3}
+              maxLength={500}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={notePlaceholder}
+            />
+            <p className="mt-0.5 text-right text-[9px] text-muted">{note.length}/500</p>
+          </div>
+
+          {error && (
+            <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-700">{error}</p>
+          )}
+
+          <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-brand hover:text-brand"
+            >
+              Cancel
+            </button>
+            <button
+              disabled={busy || !changed}
+              className="inline-flex items-center gap-1 rounded-lg bg-brand-dark px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? 'Saving…' : 'Reschedule'}
+              {!busy && <Check size={13} />}
+            </button>
+          </div>
         </form>
       </div>
     </div>

@@ -6,11 +6,20 @@ import { getAccess } from '@/lib/api';
 export type ChannelStatus = 'connecting' | 'connected' | 'disconnected';
 
 export interface ChannelEvent {
-  kind: 'message.created' | 'message.reaction';
+  kind:
+    | 'message.created'
+    | 'message.reaction'
+    | 'document.created'
+    | 'document.updated'
+    | 'payment.created'
+    | 'payment.updated';
   message?: any;
   message_id?: number;
   reactions?: any;
   toggled?: 'added' | 'removed';
+  document?: any;
+  payment_id?: number;
+  matter_id?: number;
 }
 
 function wsBase(): string {

@@ -293,7 +293,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ['id', 'channel', 'sender', 'parent', 'content', 'created_at', 'reply_count', 'reactions']
+        fields = ['id', 'channel', 'sender', 'parent', 'content', 'kind', 'created_at', 'reply_count', 'reactions']
         read_only_fields = ['sender', 'created_at', 'reply_count', 'reactions']
 
     def get_reply_count(self, obj):
@@ -361,11 +361,11 @@ class TimeEntrySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'matter', 'matter_title', 'lawyer', 'lawyer_detail', 'client_detail',
             'description', 'started_at', 'ended_at', 'minutes', 'rate_snapshot',
-            'amount', 'is_billable', 'is_running', 'created_at',
+            'amount', 'is_billable', 'is_running', 'invoice', 'created_at',
         ]
         read_only_fields = [
             'lawyer', 'started_at', 'ended_at', 'minutes', 'rate_snapshot', 'amount',
-            'created_at', 'is_running',
+            'invoice', 'created_at', 'is_running',
         ]
 
 

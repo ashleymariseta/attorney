@@ -17,9 +17,21 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  UserCheck,
+  UserPlus,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { isAuthed, lawyers as lawyersApi, type Lawyer, type Review } from '@/lib/api';
+import {
+  ApiError,
+  auth,
+  clearTokens,
+  isAuthed,
+  lawyers as lawyersApi,
+  retainers as retainersApi,
+  type Lawyer,
+  type Review,
+} from '@/lib/api';
+import { useToast } from '@/components/Toast';
 import { countryName, flagFor } from '@/lib/flag';
 import PublicHeader from '@/components/PublicHeader';
 import PublicFooter from '@/components/PublicFooter';
@@ -41,10 +53,42 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
   const [notFound, setNotFound] = useState(false);
   const [open, setOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'pending' | 'authed' | 'public'>('pending');
+  const [meRole, setMeRole] = useState<string | null>(null);
+  const [addingTeam, setAddingTeam] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
-    setAuthMode(isAuthed() ? 'authed' : 'public');
+    (async () => {
+      if (!isAuthed()) {
+        setAuthMode('public');
+        return;
+      }
+      try {
+        const me = await auth.me();
+        setMeRole(me.role);
+        setAuthMode('authed');
+      } catch {
+        clearTokens();
+        setAuthMode('public');
+      }
+    })();
   }, []);
+
+  const isClient = meRole?.startsWith('client') ?? false;
+
+  async function addToTeam() {
+    if (!lawyer || !isClient) return;
+    setAddingTeam(true);
+    try {
+      await retainersApi.add(lawyer.id);
+      setLawyer({ ...lawyer, on_retainer: true });
+      toast.success(`${lawyer.full_name} added to your legal team.`, { major: true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not add to team.');
+    } finally {
+      setAddingTeam(false);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -271,6 +315,21 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
                 <CalendarPlus size={16} /> Book consultation
                 <ArrowRight size={14} />
               </button>
+              {isClient && (
+                lawyer.on_retainer ? (
+                  <div className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                    <UserCheck size={14} /> On your legal team
+                  </div>
+                ) : (
+                  <button
+                    onClick={addToTeam}
+                    disabled={addingTeam}
+                    className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition hover:border-brand hover:text-brand disabled:opacity-50"
+                  >
+                    <UserPlus size={14} /> {addingTeam ? 'Adding…' : 'Add to my legal team'}
+                  </button>
+                )
+              )}
               <ul className="mt-5 space-y-2.5 text-xs text-ink/75">
                 <li className="flex items-start gap-2">
                   <ShieldCheck size={14} className="mt-0.5 shrink-0 text-brand-dark" />

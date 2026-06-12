@@ -6,7 +6,9 @@ import {
   type LucideIcon,
   Check,
   Clock,
+  Download,
   Eye,
+  FileText,
   Landmark,
   MessageSquare,
   MoreHorizontal,
@@ -26,6 +28,7 @@ import {
 } from '@/lib/api';
 import { DecoIcon } from '@/components/Banner';
 import PayInvoiceModal from '@/components/PayInvoiceModal';
+import FileViewerModal from '@/components/FileViewerModal';
 import { useToast } from '@/components/Toast';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -59,6 +62,7 @@ export default function TransactionsPage() {
   const [commenting, setCommenting] = useState<Transaction | null>(null);
   const [rejecting, setRejecting] = useState<Transaction | null>(null);
   const [detailTx, setDetailTx] = useState<Transaction | null>(null);
+  const [viewingProof, setViewingProof] = useState<{ url: string; title: string } | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [query, setQuery] = useState('');
 
@@ -122,10 +126,34 @@ export default function TransactionsPage() {
     );
   });
 
+  const [exporting, setExporting] = useState(false);
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      await txApi.downloadCsv();
+      toast.success('CSV download started.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not export.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-bold">Transactions</h1>
-      <p className="text-sm text-muted">Every payment and trust-ledger movement across your matters.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Transactions</h1>
+          <p className="text-sm text-muted">Every payment and trust-ledger movement across your matters.</p>
+        </div>
+        <button
+          onClick={exportCsv}
+          disabled={exporting || items.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink shadow-sm transition hover:border-brand hover:text-brand disabled:opacity-50"
+        >
+          <Download size={14} /> {exporting ? 'Exporting…' : 'Export CSV'}
+        </button>
+      </div>
 
       <div className="mt-6 grid grid-cols-3 gap-2 sm:gap-4">
         <Stat label="In escrow (trust)" value={`$${escrow}`} icon={Landmark} />
@@ -224,6 +252,18 @@ export default function TransactionsPage() {
                             tone: 'ghost',
                             onClick: () => setDetailTx(t),
                           },
+                          t.proof_of_payment_url
+                            ? {
+                                key: 'view-pop',
+                                label: 'View POP',
+                                icon: FileText,
+                                tone: 'ghost',
+                                onClick: () => setViewingProof({
+                                  url: t.proof_of_payment_url!,
+                                  title: `Proof of payment · ${t.label}`,
+                                }),
+                              }
+                            : null,
                           canPay
                             ? {
                                 key: 'pay',
@@ -305,6 +345,13 @@ export default function TransactionsPage() {
         />
       )}
       {detailTx && <TransactionDetailModal tx={detailTx} onClose={() => setDetailTx(null)} />}
+      {viewingProof && (
+        <FileViewerModal
+          url={viewingProof.url}
+          title={viewingProof.title}
+          onClose={() => setViewingProof(null)}
+        />
+      )}
     </div>
   );
 }
@@ -563,6 +610,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
+  const [viewing, setViewing] = useState<{ url: string; title: string } | null>(null);
   return (
     <ModalShell title="Transaction details" onClose={onClose}>
       <div className="space-y-0">
@@ -582,7 +630,19 @@ function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () 
         <DetailRow label="Created">{new Date(tx.created_at).toLocaleString()}</DetailRow>
         {tx.kind === 'payment' && (
           <DetailRow label="Proof of payment">
-            {tx.has_proof ? 'Uploaded' : <span className="text-muted">Not yet uploaded</span>}
+            {tx.proof_of_payment_url ? (
+              <button
+                type="button"
+                onClick={() => setViewing({ url: tx.proof_of_payment_url!, title: `Proof of payment · ${tx.label}` })}
+                className="inline-flex items-center gap-1 text-brand hover:underline"
+              >
+                <Eye size={12} /> View
+              </button>
+            ) : tx.has_proof ? (
+              'Uploaded'
+            ) : (
+              <span className="text-muted">Not yet uploaded</span>
+            )}
           </DetailRow>
         )}
         {tx.payment_id && (
@@ -601,6 +661,9 @@ function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () 
           </div>
         )}
       </div>
+      {viewing && (
+        <FileViewerModal url={viewing.url} title={viewing.title} onClose={() => setViewing(null)} />
+      )}
     </ModalShell>
   );
 }

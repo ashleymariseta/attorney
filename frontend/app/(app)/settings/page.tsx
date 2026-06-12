@@ -52,6 +52,7 @@ import {
 import { useApp } from '@/components/AppShell';
 import { useToast } from '@/components/Toast';
 import { COUNTRY_OPTIONS, flagFor } from '@/lib/flag';
+import DateField from '@/components/DateField';
 
 const ACCOUNT_TYPES: Array<{ value: PaymentAccount['account_type']; label: string; icon: LucideIcon }> = [
   { value: 'ecocash', label: 'EcoCash', icon: Smartphone },
@@ -478,11 +479,10 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="label">Expires on</label>
-              <input
-                className="field"
-                type="date"
+              <DateField
+                mode="date"
                 value={form.practising_certificate_expires ?? ''}
-                onChange={(e) => set('practising_certificate_expires', e.target.value || null)}
+                onChange={(v) => set('practising_certificate_expires', v || null)}
               />
             </div>
           </div>

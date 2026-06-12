@@ -2,6 +2,8 @@ from django.contrib import admin
 
 from .models import (
     LLMProviderConfig,
+    LLMUsageLog,
+    LLMUserQuota,
     StageResult,
     Workflow,
     WorkflowStage,
@@ -42,3 +44,18 @@ class LLMProviderConfigAdmin(admin.ModelAdmin):
     list_display = ('owner', 'provider', 'label', 'default_model', 'is_default', 'updated_at')
     list_filter = ('provider', 'is_default')
     search_fields = ('owner__email', 'label')
+
+
+@admin.register(LLMUsageLog)
+class LLMUsageLogAdmin(admin.ModelAdmin):
+    list_display = ('owner', 'provider', 'model', 'tokens_in', 'tokens_out', 'pool', 'created_at')
+    list_filter = ('provider', 'pool')
+    search_fields = ('owner__email', 'model')
+    date_hierarchy = 'created_at'
+
+
+@admin.register(LLMUserQuota)
+class LLMUserQuotaAdmin(admin.ModelAdmin):
+    list_display = ('owner', 'monthly_token_quota', 'rate_limit_per_minute', 'is_pool_disabled', 'updated_at')
+    list_filter = ('is_pool_disabled',)
+    search_fields = ('owner__email',)

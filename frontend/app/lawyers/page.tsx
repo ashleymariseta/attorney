@@ -13,6 +13,8 @@ import {
   GraduationCap,
   MapPin,
   Scale,
+  UserCheck,
+  UserPlus,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -20,7 +22,18 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { firms as firmsApi, isAuthed, lawyers as lawyersApi, type FirmCard, type Lawyer } from '@/lib/api';
+import {
+  ApiError,
+  auth,
+  clearTokens,
+  firms as firmsApi,
+  isAuthed,
+  lawyers as lawyersApi,
+  retainers as retainersApi,
+  type FirmCard,
+  type Lawyer,
+} from '@/lib/api';
+import { useToast } from '@/components/Toast';
 import { countryName, flagFor } from '@/lib/flag';
 import PublicHeader from '@/components/PublicHeader';
 import PublicFooter from '@/components/PublicFooter';
@@ -63,11 +76,47 @@ export default function PublicLawyersPage() {
   // for in-app authed users, opening the book modal directly
   const [bookFor, setBookFor] = useState<Lawyer | null>(null);
 
-  // shell selection — sidebar+nav when authed, marketing chrome when not
+  // shell selection — sidebar+nav when authed, marketing chrome when not.
+  // We verify the token by hitting /me; a stale token must not block public
+  // browsing (AppShell would otherwise redirect anonymous-but-tokened users
+  // to /login on mount).
   const [authMode, setAuthMode] = useState<'pending' | 'authed' | 'public'>('pending');
+  const [meRole, setMeRole] = useState<string | null>(null);
+  const toast = useToast();
   useEffect(() => {
-    setAuthMode(isAuthed() ? 'authed' : 'public');
+    (async () => {
+      if (!isAuthed()) {
+        setAuthMode('public');
+        return;
+      }
+      try {
+        const me = await auth.me();
+        setMeRole(me.role);
+        setAuthMode('authed');
+      } catch {
+        clearTokens();
+        setAuthMode('public');
+      }
+    })();
   }, []);
+
+  // Only clients can keep lawyers on retainer.
+  const isClient = meRole?.startsWith('client') ?? false;
+  const [addingId, setAddingId] = useState<number | null>(null);
+
+  async function addToTeam(l: Lawyer) {
+    if (!isClient) return;
+    setAddingId(l.id);
+    try {
+      await retainersApi.add(l.id);
+      setList((cur) => cur.map((x) => (x.id === l.id ? { ...x, on_retainer: true } : x)));
+      toast.success(`${l.full_name} added to your legal team.`, { major: true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not add to team.');
+    } finally {
+      setAddingId(null);
+    }
+  }
 
   // filters
   const [q, setQ] = useState('');
@@ -383,15 +432,37 @@ export default function PublicLawyersPage() {
             {filtered.map((l) => (
               <div key={l.id} className="card relative flex flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg">
                 <DecoIcon icon={Scale} />
-                {l.country && (
-                  <span
-                    className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full border border-line bg-white/95 px-2 py-1 text-xs font-semibold text-ink shadow-sm"
-                    title={countryName(l.country)}
-                  >
-                    <span className="text-base leading-none">{flagFor(l.country)}</span>
-                    {l.country}
-                  </span>
-                )}
+                <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+                  {isClient && (l.on_retainer ? (
+                    <span
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                      title="On your legal team"
+                      aria-label="On your legal team"
+                    >
+                      <UserCheck size={14} />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => addToTeam(l)}
+                      disabled={addingId === l.id}
+                      aria-label="Add to my legal team"
+                      title="Add to my legal team"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line bg-white text-brand-dark shadow-sm transition hover:border-brand hover:bg-brand-dark hover:text-white disabled:opacity-50"
+                    >
+                      <UserPlus size={13} />
+                    </button>
+                  ))}
+                  {l.country && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border border-line bg-white/95 px-2 py-1 text-xs font-semibold text-ink shadow-sm"
+                      title={countryName(l.country)}
+                    >
+                      <span className="text-base leading-none">{flagFor(l.country)}</span>
+                      {l.country}
+                    </span>
+                  )}
+                </div>
                 <Link href={`/lawyers/${l.id}`} className="relative z-10 flex items-center gap-3 outline-none">
                   <Image
                     src={photo(l.id)}

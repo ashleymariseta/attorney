@@ -26,6 +26,8 @@ from reportlab.platypus import (
 from core.models import (
     Consultation,
     ConsultationStatus,
+    Matter,
+    TimeEntry,
     TrustTransaction,
     TrustTransactionStatus,
     TrustTransactionType,
@@ -38,6 +40,30 @@ from .serializers import (
     PaymentSerializer,
     ProofOfPaymentUploadSerializer,
 )
+
+
+def _broadcast_payment(payment: Payment, *, kind: str) -> None:
+    """Push a payment.* event to the matter's chat channel so open matter
+    rooms refresh their payment cards live."""
+    channel = payment.matter.channels.filter(channel_type='matter').first()
+    if channel is None:
+        return
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        layer = get_channel_layer()
+        if layer is None:
+            return
+        async_to_sync(layer.group_send)(
+            f'channel_{channel.id}',
+            {
+                'type': 'channel.event',
+                'payload': {'kind': kind, 'payment_id': payment.id, 'matter_id': payment.matter_id},
+            },
+        )
+    except Exception:
+        pass
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -78,11 +104,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
         # The client on the matter always owes the funds — whether they deposit
         # proactively or a lawyer raises a payment request on the matter.
         matter = serializer.validated_data['matter']
-        serializer.save(
+        payment = serializer.save(
             payer=matter.client,
             reference=serializer.validated_data.get('reference', '') or result.reference,
             status=PaymentStatus.PENDING_REVIEW,
         )
+        _broadcast_payment(payment, kind='payment.created')
 
     @extend_schema(
         request=ProofOfPaymentUploadSerializer,
@@ -122,6 +149,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 matter=payment.matter, status=ConsultationStatus.AWAITING_PAYMENT
             ).update(status=ConsultationStatus.PENDING)
 
+        _broadcast_payment(payment, kind='payment.updated')
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -171,7 +199,64 @@ class PaymentViewSet(viewsets.ModelViewSet):
             audit(actor=request.user, action=f'payment.{decision}', obj=payment, meta={'note': note}, request=request)
         except Exception:
             pass
+        _broadcast_payment(payment, kind='payment.updated')
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='generate-invoice')
+    def generate_invoice(self, request):
+        """Lawyer-only: bundle every un-invoiced billable time entry on a
+        matter into a fresh invoice. Each call generates a separate Payment
+        (purpose=invoice) and links those entries to it so they never
+        appear on a subsequent invoice."""
+        from decimal import Decimal as _D
+        from django.db import transaction as _txn
+
+        user = request.user
+        if getattr(user, 'role', None) != 'lawyer':
+            return Response({'detail': 'Only lawyers can raise invoices.'}, status=status.HTTP_403_FORBIDDEN)
+        matter_id = request.data.get('matter')
+        if not matter_id:
+            return Response({'detail': 'matter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            matter = Matter.objects.get(pk=int(matter_id))
+        except (Matter.DoesNotExist, TypeError, ValueError):
+            return Response({'detail': 'Matter not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not matter.lawyers.filter(pk=user.pk).exists():
+            return Response(
+                {'detail': 'You are not assigned to this matter.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        entries = list(
+            TimeEntry.objects.filter(
+                matter=matter,
+                is_billable=True,
+                invoice__isnull=True,
+                ended_at__isnull=False,
+            )
+        )
+        total = sum((e.amount or _D('0')) for e in entries) if entries else _D('0')
+        if total <= 0:
+            return Response(
+                {'detail': 'No un-invoiced billable time on this matter.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with _txn.atomic():
+            payment = Payment.objects.create(
+                matter=matter,
+                payer=matter.client,
+                amount=total,
+                currency='USD',
+                provider='manual_pop',
+                purpose=PaymentPurpose.INVOICE,
+                status=PaymentStatus.PENDING_REVIEW,
+                reference=f'TIME-{matter.id}-{int(timezone.now().timestamp())}',
+            )
+            TimeEntry.objects.filter(pk__in=[e.pk for e in entries]).update(invoice=payment)
+
+        _broadcast_payment(payment, kind='payment.created')
+        return Response(self.get_serializer(payment).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def comment(self, request, pk=None):
@@ -186,6 +271,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         entry = f'[{stamp} — {author}] {body}'
         payment.note = (payment.note + '\n' + entry).strip() if payment.note else entry
         payment.save(update_fields=['note', 'updated_at'])
+        _broadcast_payment(payment, kind='payment.updated')
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -220,21 +306,32 @@ class PaymentViewSet(viewsets.ModelViewSet):
         matter = payment.matter
         lawyer = matter.lawyers.first()
         client = matter.client
+        lawyer_profile = getattr(lawyer, 'lawyer_profile', None) if lawyer else None
+        firm = getattr(lawyer_profile, 'firm', None) if lawyer_profile else None
         lawyer_name = (getattr(lawyer, 'get_full_name', lambda: '')() if lawyer else '') or (lawyer.email if lawyer else '—')
         client_name = (getattr(client, 'get_full_name', lambda: '')() if client else '') or (client.email if client else '—')
         lawyer_email = getattr(lawyer, 'email', '') if lawyer else ''
+        lawyer_phone = getattr(lawyer, 'phone_number', '') if lawyer else ''
         client_email = getattr(client, 'email', '') if client else ''
+        client_phone = getattr(client, 'phone_number', '') if client else ''
+        bar_number = getattr(lawyer_profile, 'bar_number', '') if lawyer_profile else ''
+        pc_number = getattr(lawyer_profile, 'practising_certificate_number', '') if lawyer_profile else ''
+        firm_name = firm.name if firm else ''
+        firm_website = firm.website if firm else ''
+        firm_country = firm.country if firm else ''
 
         is_paid = payment.status == PaymentStatus.VERIFIED
-        status_label = 'PAID' if is_paid else payment.get_status_display().upper()
-        status_hex = '#059669' if is_paid else '#92400e'
+        is_rejected = payment.status in (PaymentStatus.REJECTED, PaymentStatus.FAILED)
+        status_label = 'PAID' if is_paid else ('REJECTED' if is_rejected else payment.get_status_display().upper())
+        status_hex = '#059669' if is_paid else ('#b91c1c' if is_rejected else '#92400e')
+        status_bg = '#ecfdf5' if is_paid else ('#fef2f2' if is_rejected else '#fffbeb')
 
         elements = []
         header = Table(
             [
                 [Paragraph('ATTORNEY', styles['ATBrand']),
                  Paragraph(f'<font color="{status_hex}"><b>{status_label}</b></font>', styles['ATBrand'])],
-                [Paragraph('Law &amp; Advisory', styles['ATSmall']),
+                [Paragraph(firm_name or 'Law &amp; Advisory', styles['ATSmall']),
                  Paragraph(f'Invoice INV-{payment.id:05d}', styles['ATSmall'])],
             ],
             colWidths=[None, 70 * mm],
@@ -248,11 +345,70 @@ class PaymentViewSet(viewsets.ModelViewSet):
         elements.append(header)
         elements.append(Spacer(1, 14))
 
+        # Big colored status banner — payment status is the most important line.
+        verified_at_str = ''
+        if is_paid and getattr(payment, 'updated_at', None):
+            verified_at_str = f'Verified on {payment.updated_at.strftime("%d %b %Y")}'
+        elif is_rejected and getattr(payment, 'updated_at', None):
+            verified_at_str = f'Rejected on {payment.updated_at.strftime("%d %b %Y")}'
+
+        banner_rows = [
+            [Paragraph(
+                f'<para alignment="center"><font color="{status_hex}" size="13"><b>{status_label}</b></font></para>',
+                styles['ATValue'],
+            )]
+        ]
+        if verified_at_str:
+            banner_rows.append([Paragraph(
+                f'<para alignment="center">{verified_at_str}</para>',
+                styles['ATSmall'],
+            )])
+        banner = Table(banner_rows)
+        banner.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(status_bg)),
+            ('LINEABOVE', (0, 0), (-1, 0), 1, colors.HexColor(status_hex)),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, colors.HexColor(status_hex)),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('LEFTPADDING', (0, 0), (-1, -1), 14),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 14),
+        ]))
+        elements.append(banner)
+        elements.append(Spacer(1, 14))
+
+        # FROM / BILL TO — now includes firm details + cert numbers + phone.
+        def _from_block():
+            parts = [f'<b>{lawyer_name}</b>']
+            if firm_name:
+                parts.append(firm_name + (f' &mdash; {firm_country}' if firm_country else ''))
+            if firm_website:
+                parts.append(f'<i>{firm_website}</i>')
+            if lawyer_email:
+                parts.append(lawyer_email)
+            if lawyer_phone:
+                parts.append(lawyer_phone)
+            cert_bits = []
+            if bar_number:
+                cert_bits.append(f'Bar #{bar_number}')
+            if pc_number:
+                cert_bits.append(f'PC #{pc_number}')
+            if cert_bits:
+                parts.append(' · '.join(cert_bits))
+            return '<br/>'.join(parts)
+
+        def _bill_to_block():
+            parts = [f'<b>{client_name}</b>']
+            if client_email:
+                parts.append(client_email)
+            if client_phone:
+                parts.append(client_phone)
+            return '<br/>'.join(parts)
+
         bill = Table(
             [
                 [Paragraph('FROM', styles['ATEyebrow']), Paragraph('BILL TO', styles['ATEyebrow'])],
-                [Paragraph(f'<b>{lawyer_name}</b><br/>{lawyer_email}', styles['ATValue']),
-                 Paragraph(f'<b>{client_name}</b><br/>{client_email}', styles['ATValue'])],
+                [Paragraph(_from_block(), styles['ATValue']),
+                 Paragraph(_bill_to_block(), styles['ATValue'])],
             ],
         )
         bill.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BOTTOMPADDING', (0, 0), (-1, -1), 2)]))

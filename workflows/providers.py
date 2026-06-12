@@ -49,9 +49,21 @@ class BaseLLMProvider(abc.ABC):
         self.config = config
 
     @abc.abstractmethod
-    def complete(self, *, system: str, user: str, model: Optional[str] = None) -> Completion:
+    def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        model: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Completion:
         """Single-turn completion. Returns a populated :class:`Completion`
-        or raises :class:`ProviderError`."""
+        or raises :class:`ProviderError`.
+
+        ``user_id`` is a stable per-tenant identifier (e.g. a hash of the
+        lawyer's user id) attached to provider-side telemetry so abuse can
+        be attributed without sending PII upstream.
+        """
 
     # --- helpers ---------------------------------------------------------
     @staticmethod
@@ -77,7 +89,7 @@ class ClaudeProvider(BaseLLMProvider):
     name = 'anthropic'
     default_model = 'claude-opus-4-7'
 
-    def complete(self, *, system, user, model=None):
+    def complete(self, *, system, user, model=None, user_id=None):
         if not self.config.api_key:
             raise ProviderError('No Anthropic API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -91,6 +103,8 @@ class ClaudeProvider(BaseLLMProvider):
             'system': system,
             'messages': [{'role': 'user', 'content': user}],
         }
+        if user_id:
+            payload['metadata'] = {'user_id': user_id}
         data = self._post_json('https://api.anthropic.com/v1/messages', headers, payload)
         text = ''
         for block in data.get('content', []) or []:
@@ -113,7 +127,7 @@ class OpenAIProvider(BaseLLMProvider):
     name = 'openai'
     default_model = 'gpt-4o'
 
-    def complete(self, *, system, user, model=None):
+    def complete(self, *, system, user, model=None, user_id=None):
         if not self.config.api_key:
             raise ProviderError('No OpenAI API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -126,6 +140,8 @@ class OpenAIProvider(BaseLLMProvider):
             ],
             'temperature': 0.2,
         }
+        if user_id:
+            payload['user'] = user_id
         base = (self.config.base_url or 'https://api.openai.com').rstrip('/')
         data = self._post_json(f'{base}/v1/chat/completions', headers, payload)
         choices = data.get('choices') or []
@@ -157,7 +173,10 @@ class LocalProvider(BaseLLMProvider):
     name = 'local'
     default_model = 'llama3.1'
 
-    def complete(self, *, system, user, model=None):
+    def complete(self, *, system, user, model=None, user_id=None):
+        # user_id intentionally unused — self-hosted endpoints typically
+        # don't need provider-side attribution and many ignore extra fields.
+        del user_id
         if not self.config.base_url:
             raise ProviderError('No base URL configured for the local provider.')
         model = model or self.config.default_model or self.default_model
@@ -219,8 +238,61 @@ _REGISTRY = {
 }
 
 
-def get_provider(config: LLMProviderConfig) -> BaseLLMProvider:
-    """Return the concrete adapter for a saved configuration."""
+@dataclass
+class PoolConfigShim:
+    """Quacks like :class:`LLMProviderConfig` but lives in env/settings.
+
+    Used when a lawyer hasn't added their own key and we fall back to the
+    platform-managed pool. Marked ``is_pool=True`` so callers can apply
+    rate limits + token quotas.
+    """
+
+    provider: str
+    api_key: str = ''
+    base_url: str = ''
+    default_model: str = ''
+    label: str = 'Platform pool'
+    is_pool: bool = True
+
+
+def pool_config(provider: str) -> Optional['PoolConfigShim']:
+    """Construct a pool config from Django settings, or ``None`` when the
+    platform hasn't configured a pool key for this provider."""
+    from django.conf import settings as dj_settings
+
+    if provider == LLMProvider.ANTHROPIC:
+        key = getattr(dj_settings, 'LLM_POOL_ANTHROPIC_API_KEY', '')
+        if not key:
+            return None
+        return PoolConfigShim(
+            provider=provider,
+            api_key=key,
+            default_model=getattr(dj_settings, 'LLM_POOL_ANTHROPIC_DEFAULT_MODEL', '') or ClaudeProvider.default_model,
+        )
+    if provider == LLMProvider.OPENAI:
+        key = getattr(dj_settings, 'LLM_POOL_OPENAI_API_KEY', '')
+        if not key:
+            return None
+        return PoolConfigShim(
+            provider=provider,
+            api_key=key,
+            base_url=getattr(dj_settings, 'LLM_POOL_OPENAI_BASE_URL', '') or '',
+            default_model=getattr(dj_settings, 'LLM_POOL_OPENAI_DEFAULT_MODEL', '') or OpenAIProvider.default_model,
+        )
+    if provider == LLMProvider.LOCAL:
+        base = getattr(dj_settings, 'LLM_POOL_LOCAL_BASE_URL', '')
+        if not base:
+            return None
+        return PoolConfigShim(
+            provider=provider,
+            base_url=base,
+            default_model=getattr(dj_settings, 'LLM_POOL_LOCAL_DEFAULT_MODEL', '') or LocalProvider.default_model,
+        )
+    return None
+
+
+def get_provider(config) -> BaseLLMProvider:
+    """Return the concrete adapter for a saved configuration or pool shim."""
     cls = _REGISTRY.get(config.provider)
     if cls is None:
         raise ProviderError(f'Unknown provider: {config.provider}')

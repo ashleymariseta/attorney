@@ -17,7 +17,9 @@ import {
   CalendarDays,
   CalendarClock,
   Check,
+  Eye,
   FileText,
+  Flag,
   Receipt,
   ThumbsDown,
   ThumbsUp,
@@ -48,6 +50,9 @@ import PayInvoiceModal from '@/components/PayInvoiceModal';
 import { useToast } from '@/components/Toast';
 import { setRunning as setRunningStore, useRunningTimer } from '@/lib/timerStore';
 import { DraftRow, RejectPaymentModal, RescheduleModal } from '@/components/MatterModals';
+import FileViewerModal from '@/components/FileViewerModal';
+import InvoiceViewerModal from '@/components/InvoiceViewerModal';
+import { LogTimeModal } from '@/components/TimeTracker';
 import { fireNotification, requestPermissionOnce } from '@/lib/browserNotify';
 import { useChannelSocket } from '@/lib/channelSocket';
 import { MessageCircle, Smile } from 'lucide-react';
@@ -258,7 +263,9 @@ function PaymentCard({
 }) {
   const isPending = /pending|awaiting|review/i.test(p.status);
   const hasProof = !!p.proof_of_payment_url;
+  const [viewingProof, setViewingProof] = useState(false);
   return (
+    <>
     <TimelineCard
       icon={Receipt}
       iconTone="bg-emerald-50 text-emerald-700"
@@ -279,15 +286,18 @@ function PaymentCard({
       action={
         <span className="flex items-center gap-1">
           {hasProof && (
-            <a
-              href={p.proof_of_payment_url!}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(e) => e.stopPropagation()}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewingProof(true);
+              }}
+              aria-label="View proof of payment"
+              title="View proof of payment"
               className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2 py-1 text-[10px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
             >
-              POP
-            </a>
+              <Eye size={11} /> POP
+            </button>
           )}
           {mine && onPay && !hasProof && isPending && (
             <button
@@ -327,6 +337,14 @@ function PaymentCard({
         </span>
       }
     />
+    {viewingProof && p.proof_of_payment_url && (
+      <FileViewerModal
+        url={p.proof_of_payment_url}
+        title={`Proof of payment · ${p.purpose?.replace(/_/g, ' ') || 'Payment'}`}
+        onClose={() => setViewingProof(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -421,6 +439,8 @@ function PaymentDetail({
   canPay: boolean;
   onPay: () => void;
 }) {
+  const [viewingProof, setViewingProof] = useState(false);
+  const [viewingInvoice, setViewingInvoice] = useState(false);
   return (
     <div className="space-y-0">
       <div className="mb-3 flex items-center justify-between">
@@ -436,20 +456,41 @@ function PaymentDetail({
       <Row label="Created">{new Date(p.created_at).toLocaleString()}</Row>
       <Row label="Proof of payment">
         {p.proof_of_payment_url ? (
-          <a href={p.proof_of_payment_url} target="_blank" rel="noreferrer" className="text-brand underline">
-            View file
-          </a>
+          <button
+            type="button"
+            onClick={() => setViewingProof(true)}
+            className="inline-flex items-center gap-1 text-brand hover:underline"
+          >
+            <Eye size={12} /> View file
+          </button>
         ) : (
           <span className="text-muted">Not yet uploaded</span>
         )}
       </Row>
+      <button
+        type="button"
+        onClick={() => setViewingInvoice(true)}
+        className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-brand hover:text-brand"
+      >
+        <Eye size={14} /> View invoice
+      </button>
       {canPay && (
         <button
           onClick={onPay}
-          className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand"
+          className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand"
         >
           <Receipt size={16} /> Pay this invoice
         </button>
+      )}
+      {viewingProof && p.proof_of_payment_url && (
+        <FileViewerModal
+          url={p.proof_of_payment_url}
+          title={`Proof of payment · ${p.purpose?.replace(/_/g, ' ') || 'Payment'}`}
+          onClose={() => setViewingProof(false)}
+        />
+      )}
+      {viewingInvoice && (
+        <InvoiceViewerModal paymentId={p.id} onClose={() => setViewingInvoice(false)} />
       )}
     </div>
   );
@@ -669,6 +710,8 @@ export default function MatterRoomPage() {
     }
   }
 
+  const [milestoneOpen, setMilestoneOpen] = useState(false);
+
   if (loading) {
     return (
       <div className="flex h-full flex-col">
@@ -695,7 +738,9 @@ export default function MatterRoomPage() {
 
   const attachActions: AttachAction[] = [
     { key: 'document', label: 'Document', icon: FileUp, onClick: () => docInputRef.current?.click() },
-    { key: 'draft', label: 'Draft', icon: PenLine, onClick: () => setDrawer('drafts') },
+    ...(isLawyer
+      ? [{ key: 'milestone', label: 'Milestone', icon: Flag, onClick: () => setMilestoneOpen(true) } as AttachAction]
+      : []),
     { key: 'payment', label: isLawyer ? 'Request payment' : 'Make a payment', icon: CreditCard, onClick: () => setDrawer('payments') },
     ...(isLawyer ? [{ key: 'time', label: 'Log time', icon: Clock, onClick: () => setDrawer('time') } as AttachAction] : []),
     ...(isClient ? [{ key: 'review', label: 'Leave a review', icon: Star, onClick: () => setDrawer('reviews') } as AttachAction] : []),
@@ -747,6 +792,7 @@ export default function MatterRoomPage() {
           onSent={() => reloadMessages(channelId)}
           onPaymentChange={() => reloadPays()}
           onConsultationChange={() => reloadConsultations()}
+          onDocumentChange={() => reloadDocs()}
           attachActions={attachActions}
           hasOlderMessages={msgHasMore}
           loadingOlder={msgLoadingMore}
@@ -788,6 +834,16 @@ export default function MatterRoomPage() {
           reloadReviews={reloadReviews}
         />
       )}
+      {milestoneOpen && channelId && (
+        <MilestoneModal
+          channelId={channelId}
+          onClose={() => setMilestoneOpen(false)}
+          onPosted={async () => {
+            setMilestoneOpen(false);
+            await reloadMessages(channelId);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -804,6 +860,7 @@ function MessageThread({
   onSent,
   onPaymentChange,
   onConsultationChange,
+  onDocumentChange,
   attachActions,
   hasOlderMessages,
   loadingOlder,
@@ -819,6 +876,7 @@ function MessageThread({
   onSent: () => void;
   onPaymentChange: () => void;
   onConsultationChange: () => void;
+  onDocumentChange: () => void;
   attachActions: AttachAction[];
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
@@ -845,6 +903,12 @@ function MessageThread({
     if (event.kind === 'message.created' || event.kind === 'message.reaction') {
       onSent();
     }
+    if (event.kind === 'document.created' || event.kind === 'document.updated') {
+      onDocumentChange();
+    }
+    if (event.kind === 'payment.created' || event.kind === 'payment.updated') {
+      onPaymentChange();
+    }
     if (event.kind === 'message.created' && event.message?.sender?.id !== meId) {
       const senderName = event.message?.sender?.full_name || 'Someone';
       const preview = (event.message?.content || '').slice(0, 120);
@@ -854,6 +918,13 @@ function MessageThread({
         onClick: () => {
           /* the page is already loaded; focusing the window is enough */
         },
+      });
+    }
+    if (event.kind === 'document.created' && event.document?.uploader_detail?.id !== meId) {
+      const uploader = event.document?.uploader_detail?.full_name || 'Someone';
+      fireNotification(`${uploader} uploaded a document`, {
+        body: event.document?.title || '',
+        tag: `matter-${matterId}-doc`,
       });
     }
   });
@@ -1033,6 +1104,16 @@ function MessageThread({
             }
 
             const m = item.m;
+            if (m.kind === 'milestone') {
+              return (
+                <MilestoneDivider
+                  key={`m-${m.id}`}
+                  label={m.content}
+                  by={m.sender.full_name}
+                  time={m.created_at}
+                />
+              );
+            }
             const mine = m.sender.id === meId;
             const grouped = prev && prev.kind === 'message' && prev.m.sender.id === m.sender.id;
             return (
@@ -1267,7 +1348,7 @@ function InfoDrawer({
           {tab === 'links' && <LinksPanel msgs={msgs} />}
           {tab === 'drafts' && <DraftsPanel matterId={matterId} items={docs.filter((d) => d.kind === 'draft')} onChange={reloadDocs} />}
           {tab === 'payments' && <PaymentsPanel matterId={matterId} items={pays} onChange={reloadPays} />}
-          {tab === 'time' && <TimePanel matterId={matterId} items={times} onChange={reloadTimes} />}
+          {tab === 'time' && <TimePanel matter={matter} isLawyer={isLawyer} items={times} onChange={reloadTimes} />}
           {tab === 'reviews' && <ReviewsPanel matterId={matterId} items={revs} canReview={isClient} onChange={reloadReviews} />}
         </div>
       </div>
@@ -1442,6 +1523,7 @@ function PaymentsPanel({ matterId, items, onChange }: { matterId: number; items:
 function PaymentRow({ payment, onChange }: { payment: Payment; onChange: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [viewingProof, setViewingProof] = useState(false);
   const verified = payment.status === 'verified';
 
   async function upload() {
@@ -1464,9 +1546,13 @@ function PaymentRow({ payment, onChange }: { payment: Payment; onChange: () => v
       </div>
       <p className="text-[11px] uppercase text-muted">{payment.purpose}</p>
       {payment.proof_of_payment_url ? (
-        <a href={payment.proof_of_payment_url} target="_blank" className="mt-2 inline-block text-xs text-brand underline">
-          View proof of payment
-        </a>
+        <button
+          type="button"
+          onClick={() => setViewingProof(true)}
+          className="mt-2 inline-flex items-center gap-1 text-xs text-brand hover:underline"
+        >
+          <Eye size={12} /> View proof of payment
+        </button>
       ) : (
         <div className="mt-2 space-y-1">
           <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp"
@@ -1475,6 +1561,13 @@ function PaymentRow({ payment, onChange }: { payment: Payment; onChange: () => v
             {busy ? 'Uploading…' : 'Upload proof of payment'}
           </button>
         </div>
+      )}
+      {viewingProof && payment.proof_of_payment_url && (
+        <FileViewerModal
+          url={payment.proof_of_payment_url}
+          title={`Proof of payment · ${payment.purpose?.replace(/_/g, ' ') || 'Payment'}`}
+          onClose={() => setViewingProof(false)}
+        />
       )}
     </div>
   );
@@ -1551,9 +1644,37 @@ function TimerWidget({ matterId, onChange }: { matterId: number; onChange: () =>
 }
 
 /* ---------------- Time panel ---------------- */
-function TimePanel({ matterId, items, onChange }: { matterId: number; items: TimeEntry[]; onChange: () => void }) {
+function TimePanel({
+  matter,
+  isLawyer,
+  items,
+  onChange,
+}: {
+  matter: Matter;
+  isLawyer: boolean;
+  items: TimeEntry[];
+  onChange: () => void;
+}) {
+  const toast = useToast();
   const total = items.reduce((s, e) => s + (e.amount ? Number(e.amount) : 0), 0);
   const minutes = items.reduce((s, e) => s + e.minutes, 0);
+  const [logging, setLogging] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(payload: { matter: number; minutes: number; description: string; started_at?: string }) {
+    setBusy(true);
+    try {
+      await timeApi.log({ ...payload, is_billable: true });
+      onChange();
+      setLogging(false);
+      toast.success(`Logged ${payload.minutes} min on ${matter.title}.`, { major: true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not log time.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between rounded-lg bg-canvas px-4 py-3">
@@ -1563,8 +1684,21 @@ function TimePanel({ matterId, items, onChange }: { matterId: number; items: Tim
         </div>
         <p className="text-sm text-muted">{minutes} min logged</p>
       </div>
+
+      {isLawyer && (
+        <button
+          type="button"
+          onClick={() => setLogging(true)}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line bg-white px-3 py-2 text-xs font-semibold text-brand-dark transition hover:border-brand hover:bg-brand-light/15"
+        >
+          <Plus size={13} /> Log time on this matter
+        </button>
+      )}
+
       {items.length === 0 ? (
-        <p className="text-sm text-muted">No time logged. Use the timer in the header.</p>
+        <p className="text-sm text-muted">
+          {isLawyer ? 'No time logged yet — use the timer in the header or the button above.' : 'No time logged yet.'}
+        </p>
       ) : (
         items.map((e) => (
           <div key={e.id} className="rounded-lg border border-line p-3 text-sm">
@@ -1578,6 +1712,15 @@ function TimePanel({ matterId, items, onChange }: { matterId: number; items: Tim
             </p>
           </div>
         ))
+      )}
+
+      {logging && (
+        <LogTimeModal
+          matters={[matter]}
+          busy={busy}
+          onClose={() => setLogging(false)}
+          onSubmit={submit}
+        />
       )}
     </div>
   );
@@ -1886,6 +2029,165 @@ function ThreadModal({
             <Send size={18} />
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Milestone divider (inline in timeline) ---------------- */
+
+function MilestoneDivider({ label, by, time }: { label: string; by: string; time: string }) {
+  return (
+    <div className="my-4 flex items-center gap-3">
+      <span className="h-px flex-1 bg-line" />
+      <div className="flex flex-col items-center text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/80 shadow-sm">
+          <Flag size={11} className="text-brand-dark" />
+          {label}
+        </span>
+        <p className="mt-1 text-[10px] text-muted">
+          {by} · {new Date(time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+        </p>
+      </div>
+      <span className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
+
+/* ---------------- Milestone modal ---------------- */
+
+const MILESTONE_PRESETS: { label: string }[] = [
+  { label: 'Court application filed' },
+  { label: 'Awaiting trial' },
+  { label: 'Awaiting ruling' },
+  { label: 'Ruling delivered' },
+  { label: 'Settlement reached' },
+  { label: 'Matter closed' },
+];
+
+function MilestoneModal({
+  channelId,
+  onClose,
+  onPosted,
+}: {
+  channelId: number;
+  onClose: () => void;
+  onPosted: () => void;
+}) {
+  const toast = useToast();
+  const [preset, setPreset] = useState<string | null>(null);
+  const [custom, setCustom] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const label = preset ?? custom.trim();
+  const canPost = label.length > 0 && !busy;
+
+  async function submit() {
+    if (!canPost) return;
+    setBusy(true);
+    try {
+      await messagesApi.send(channelId, label, undefined, 'milestone');
+      toast.success(`Milestone posted: ${label}.`, { major: true });
+      onPosted();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not post milestone.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl bg-surface shadow-2xl ring-1 ring-line">
+        <div className="flex items-start justify-between gap-3 bg-gradient-to-br from-brand-dark to-brand px-5 py-4 text-white">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15 ring-1 ring-inset ring-white/25">
+              <Flag size={16} />
+            </span>
+            <div>
+              <h3 className="text-base font-bold leading-tight">Post a milestone</h3>
+              <p className="text-[11px] text-white/80">Mark the matter&rsquo;s current status in the timeline.</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1.5 text-white/80 transition hover:bg-white/15 hover:text-white"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted">Pick a preset</p>
+            <div className="flex flex-wrap gap-2">
+              {MILESTONE_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => {
+                    setPreset(p.label);
+                    setCustom('');
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                    preset === p.label
+                      ? 'border-brand-dark bg-brand-dark text-white'
+                      : 'border-line text-muted hover:border-brand hover:text-brand'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">…or write your own</p>
+            <input
+              className="field text-sm"
+              value={custom}
+              onChange={(e) => {
+                setCustom(e.target.value);
+                setPreset(null);
+              }}
+              placeholder="e.g. Discovery response served"
+              maxLength={160}
+            />
+          </div>
+
+          <div className="rounded-xl border border-dashed border-line bg-canvas px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Preview</p>
+            <div className="mt-2 flex items-center gap-3">
+              <span className="h-px flex-1 bg-line" />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink/80">
+                <Flag size={11} className="text-brand-dark" />
+                {label || '—'}
+              </span>
+              <span className="h-px flex-1 bg-line" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand hover:text-brand"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canPost}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-brand disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? 'Posting…' : 'Post milestone'}
+              {!busy && <Check size={13} />}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

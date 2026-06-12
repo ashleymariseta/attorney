@@ -51,10 +51,48 @@ function describe(body: unknown): string {
   return 'Request failed';
 }
 
+// In-flight refresh promise so concurrent requests that all hit 401 only
+// trigger ONE refresh roundtrip and then retry in parallel.
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refresh = getRefresh();
+  if (!refresh) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/auth/token/refresh/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh }),
+    });
+    if (!res.ok) {
+      clearTokens();
+      return null;
+    }
+    const data = (await res.json()) as { access?: string; refresh?: string };
+    if (!data.access) {
+      clearTokens();
+      return null;
+    }
+    // SimpleJWT can be configured to rotate refresh tokens; honor it.
+    window.localStorage.setItem(ACCESS_KEY, data.access);
+    if (data.refresh) window.localStorage.setItem(REFRESH_KEY, data.refresh);
+    return data.access;
+  } catch {
+    return null;
+  }
+}
+
+function shouldTryRefresh(body: unknown): boolean {
+  // SimpleJWT returns one of these codes on an expired/invalid access token.
+  if (!body || typeof body !== 'object') return true;
+  const code = (body as { code?: string }).code;
+  return code === 'token_not_valid' || code === undefined;
+}
+
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
-  { auth = true }: { auth?: boolean } = {}
+  { auth = true, _retried = false }: { auth?: boolean; _retried?: boolean } = {}
 ): Promise<T> {
   const headers = new Headers(options.headers);
   const isForm = options.body instanceof FormData;
@@ -73,6 +111,16 @@ export async function api<T = unknown>(
   const text = await res.text();
   const body = text ? JSON.parse(text) : null;
 
+  if (res.status === 401 && auth && !_retried && shouldTryRefresh(body) && getRefresh()) {
+    // Re-using a single in-flight refresh promise across concurrent failures.
+    refreshInFlight = refreshInFlight ?? refreshAccessToken();
+    const fresh = await refreshInFlight;
+    refreshInFlight = null;
+    if (fresh) {
+      return api<T>(path, options, { auth, _retried: true });
+    }
+  }
+
   if (!res.ok) {
     throw new ApiError(res.status, body, describe(body));
   }
@@ -89,6 +137,7 @@ export interface User {
   whatsapp_number?: string;
   role: string;
   is_verified: boolean;
+  is_staff?: boolean;
   email_verified?: boolean;
   two_factor_method?: 'off' | 'email' | 'whatsapp';
   avatar_url?: string | null;
@@ -187,6 +236,7 @@ export interface TimeEntry {
   rate_snapshot: string | null;
   is_billable: boolean;
   is_running: boolean;
+  invoice: number | null;
 }
 export interface Transaction {
   id: string;
@@ -203,6 +253,7 @@ export interface Transaction {
   purpose?: string;
   payer_id?: number;
   has_proof?: boolean;
+  proof_of_payment_url?: string | null;
   can_review?: boolean;
   note?: string;
   review_note?: string;
@@ -273,6 +324,7 @@ export interface Message {
   channel: number;
   sender: MiniUser;
   content: string;
+  kind?: 'regular' | 'milestone';
   created_at: string;
   parent?: number | null;
   reply_count?: number;
@@ -413,10 +465,10 @@ export const consultations = {
   complete(id: number) {
     return api<Consultation>(`/api/v1/consultations/${id}/complete/`, { method: 'POST' });
   },
-  reschedule(id: number, scheduledTime: string) {
+  reschedule(id: number, scheduledTime: string, note?: string) {
     return api<Consultation>(`/api/v1/consultations/${id}/reschedule/`, {
       method: 'POST',
-      body: JSON.stringify({ scheduled_time: scheduledTime }),
+      body: JSON.stringify({ scheduled_time: scheduledTime, note: note ?? '' }),
     });
   },
 };
@@ -661,12 +713,64 @@ export interface LawyerClient {
   last_name: string;
   full_name: string;
   phone_number: string;
+  whatsapp_number?: string;
+  avatar_url?: string | null;
   relationship: 'retainer' | 'prior_work';
+  matters_count?: number;
+  active_matters_count?: number;
+  invoiced_total?: string;
+  outstanding_total?: string;
+  paid_total?: string;
+  last_consultation_at?: string | null;
 }
+
+export interface ClientPayment extends Payment {
+  matter_title: string;
+}
+
+export interface LawyerClientDetail {
+  client: {
+    id: number;
+    email: string;
+    first_name: string;
+    last_name: string;
+    full_name: string;
+    phone_number: string;
+    whatsapp_number?: string;
+    avatar_url?: string | null;
+  };
+  summary: LawyerClient | null;
+  matters: Matter[];
+  payments: ClientPayment[];
+  consultations: Consultation[];
+}
+
+export const lawyerClients = {
+  detail(clientId: number) {
+    return api<LawyerClientDetail>(`/api/v1/lawyer-clients/${clientId}/`);
+  },
+};
 
 export const transactions = {
   list() {
     return api<{ count: number; total_escrow: string; results: Transaction[] }>('/api/v1/transactions/');
+  },
+  async downloadCsv() {
+    const token = getAccess();
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    const res = await fetch(`${base}/api/v1/transactions/export.csv`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) throw new ApiError(res.status, null, 'Could not export transactions.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 };
 
@@ -704,6 +808,12 @@ export const retainers = {
   list() {
     return api<Paginated<Retainer>>('/api/v1/retainers/');
   },
+  add(lawyerId: number) {
+    return api<Retainer>('/api/v1/retainers/', {
+      method: 'POST',
+      body: JSON.stringify({ lawyer: lawyerId }),
+    });
+  },
 };
 
 export const messages = {
@@ -715,9 +825,10 @@ export const messages = {
       `/api/v1/messages/?channel=${channelId}&page=${page}&ordering=-created_at`
     );
   },
-  send(channelId: number, content: string, parent?: number) {
+  send(channelId: number, content: string, parent?: number, kind?: 'regular' | 'milestone') {
     const body: any = { channel: channelId, content };
     if (parent) body.parent = parent;
+    if (kind && kind !== 'regular') body.kind = kind;
     return api<Message>('/api/v1/messages/', { method: 'POST', body: JSON.stringify(body) });
   },
   replies(messageId: number) {
@@ -957,6 +1068,37 @@ export const workflowStages = {
   },
 };
 
+export interface LlmUsageRow {
+  user_id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  pool_tokens: number;
+  byok_tokens: number;
+  last_used: string | null;
+  monthly_quota: number;
+  rate_limit_per_minute: number;
+  pool_disabled: boolean;
+}
+
+export interface LlmUsageSummary {
+  month_start: string;
+  defaults: { monthly_quota: number; rate_limit_per_minute: number };
+  pool_configured: { anthropic: boolean; openai: boolean; local: boolean };
+  results: LlmUsageRow[];
+}
+
+export const llmUsage = {
+  /** Platform admin: every tenant's current-month usage. */
+  list() {
+    return api<LlmUsageSummary>('/api/v1/llm-usage/');
+  },
+  /** Caller's own current-month usage — non-admin lawyers see this. */
+  me() {
+    return api<LlmUsageSummary>('/api/v1/llm-usage/me/');
+  },
+};
+
 export const llmProviders = {
   list() {
     return api<Paginated<LlmProviderConfig>>('/api/v1/llm-providers/');
@@ -1017,6 +1159,12 @@ export const payments = {
     return api<Payment>(`/api/v1/payments/${id}/comment/`, {
       method: 'POST',
       body: JSON.stringify({ body }),
+    });
+  },
+  generateInvoice(matterId: number) {
+    return api<Payment>('/api/v1/payments/generate-invoice/', {
+      method: 'POST',
+      body: JSON.stringify({ matter: matterId }),
     });
   },
   invoicePdfUrl(paymentId: number): string {

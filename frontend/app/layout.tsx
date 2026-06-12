@@ -3,6 +3,7 @@ import { Aldrich, Playfair_Display } from 'next/font/google';
 import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 import CookieConsent from '@/components/CookieConsent';
+import AntProvider from '@/components/AntProvider';
 
 const aldrich = Aldrich({ subsets: ['latin'], weight: '400', variable: '--font-aldrich' });
 const playfair = Playfair_Display({
@@ -50,10 +51,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${aldrich.variable} ${playfair.variable}`}>
       <body className="min-h-screen bg-canvas text-ink font-sans antialiased">
-        <ToastProvider>
-          {children}
-          <CookieConsent />
-        </ToastProvider>
+        <AntProvider>
+          <ToastProvider>
+            {children}
+            <CookieConsent />
+          </ToastProvider>
+        </AntProvider>
       </body>
     </html>
   );

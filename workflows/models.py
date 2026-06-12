@@ -143,6 +143,46 @@ class StageResult(models.Model):
         return f'{self.stage.title} via {self.provider}'
 
 
+class LLMUsageLog(models.Model):
+    """One row per LLM call. Every workflow stage run + co-researcher ask
+    writes here so the platform can attribute spend, hold per-tenant
+    quotas, and surface usage to admins."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='llm_usage_logs'
+    )
+    provider = models.CharField(max_length=16, choices=LLMProvider.choices)
+    model = models.CharField(max_length=80, blank=True)
+    tokens_in = models.PositiveIntegerField(default=0)
+    tokens_out = models.PositiveIntegerField(default=0)
+    pool = models.BooleanField(default=False, help_text='True when served by the platform pool key.')
+    error = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['owner', '-created_at']),
+            models.Index(fields=['pool', '-created_at']),
+        ]
+
+
+class LLMUserQuota(models.Model):
+    """Per-user override of the platform's default pool quota. Falls back
+    to ``settings.LLM_POOL_*`` when no row exists for a given user."""
+
+    owner = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='llm_quota'
+    )
+    monthly_token_quota = models.PositiveIntegerField(null=True, blank=True)
+    rate_limit_per_minute = models.PositiveIntegerField(null=True, blank=True)
+    is_pool_disabled = models.BooleanField(
+        default=False,
+        help_text='When True the user must BYOK; pool-key fallback is denied.',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class LLMProviderConfig(models.Model):
     """A lawyer's saved provider configuration. Multiple per user — they may
     have separate Claude and OpenAI configurations; ``is_default`` marks

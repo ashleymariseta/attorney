@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   Download,
+  Eye,
   FileText,
   Receipt,
   Search,
@@ -20,6 +21,7 @@ import { useApp } from '@/components/AppShell';
 import { DecoIcon } from '@/components/Banner';
 import TimeTracker from '@/components/TimeTracker';
 import { useToast } from '@/components/Toast';
+import InvoiceViewerModal from '@/components/InvoiceViewerModal';
 import {
   payments as paymentsApi,
   timeEntries as timeApi,
@@ -49,6 +51,7 @@ export default function BillablesPage() {
   const [invoicesPage, setInvoicesPage] = useState(1);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [downloading, setDownloading] = useState<number | null>(null);
+  const [viewingInvoiceId, setViewingInvoiceId] = useState<number | null>(null);
 
   useEffect(() => {
     if (me && me.role !== 'lawyer') router.replace('/dashboard');
@@ -97,7 +100,17 @@ export default function BillablesPage() {
   const grouped = useMemo(() => {
     const map = new Map<
       number,
-      { matter_id: number; matter_title: string; entries: TimeEntry[]; minutes: number; amount: number }
+      {
+        matter_id: number;
+        matter_title: string;
+        entries: TimeEntry[];
+        minutes: number;
+        amount: number;
+        // The slice that hasn't been rolled into an invoice yet — drives
+        // the "Generate invoice" button so a fresh invoice never double-bills.
+        uninvoiced_minutes: number;
+        uninvoiced_amount: number;
+      }
     >();
     for (const e of filteredEntries) {
       const g = map.get(e.matter) ?? {
@@ -106,13 +119,19 @@ export default function BillablesPage() {
         entries: [],
         minutes: 0,
         amount: 0,
+        uninvoiced_minutes: 0,
+        uninvoiced_amount: 0,
       };
       g.entries.push(e);
       g.minutes += e.minutes || 0;
       g.amount += e.amount ? Number(e.amount) : 0;
+      if (e.invoice == null) {
+        g.uninvoiced_minutes += e.minutes || 0;
+        g.uninvoiced_amount += e.amount ? Number(e.amount) : 0;
+      }
       map.set(e.matter, g);
     }
-    return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
+    return Array.from(map.values()).sort((a, b) => b.uninvoiced_amount - a.uninvoiced_amount);
   }, [filteredEntries]);
 
   const filteredInvoices = useMemo(() => {
@@ -136,21 +155,15 @@ export default function BillablesPage() {
   const grandAmount = grouped.reduce((s, g) => s + g.amount, 0);
 
   async function generateInvoice(matterId: number, amount: number) {
-    if (amount <= 0) return toast.warn('No billable amount to invoice yet.');
+    if (amount <= 0) return toast.warn('No un-invoiced billable time to bill yet.');
     const ok = await toast.confirm({
       title: `Generate $${amount.toFixed(2)} invoice?`,
-      body: 'The client will see this in the matter room and on their transactions list.',
+      body: 'Only un-invoiced billable time on this matter will be included. The client will see this in the matter room and transactions list.',
       confirmLabel: 'Create invoice',
     });
     if (!ok) return;
     try {
-      await paymentsApi.create({
-        matter: matterId,
-        amount: amount.toFixed(2),
-        currency: 'USD',
-        provider: 'manual_pop',
-        purpose: 'invoice',
-      });
+      await paymentsApi.generateInvoice(matterId);
       await refresh();
       toast.success('Invoice raised — client notified in matter room.', { major: true });
     } catch (e) {
@@ -288,7 +301,12 @@ export default function BillablesPage() {
                       <div className="flex shrink-0 items-center gap-3 text-xs text-muted">
                         <span>{g.entries.length} entries</span>
                         <span>{Math.round((g.minutes / 60) * 10) / 10}h</span>
-                        <span className="text-base font-bold text-ink">${g.amount.toFixed(2)}</span>
+                        <div className="text-right">
+                          <span className="block text-base font-bold text-ink">${g.uninvoiced_amount.toFixed(2)}</span>
+                          {g.uninvoiced_amount !== g.amount && (
+                            <span className="block text-[10px] uppercase tracking-wide text-muted">to invoice (of ${g.amount.toFixed(2)})</span>
+                          )}
+                        </div>
                       </div>
                     </button>
 
@@ -300,6 +318,11 @@ export default function BillablesPage() {
                               <span className="truncate text-ink">
                                 {e.description || 'Billable work'}
                                 {e.is_running && <span className="ml-1 text-brand">• running</span>}
+                                {e.invoice != null && (
+                                  <span className="ml-2 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                                    invoiced
+                                  </span>
+                                )}
                               </span>
                               <span className="shrink-0 text-muted">
                                 {new Date(e.started_at).toLocaleDateString()} · {e.minutes}m · ${e.amount ?? '—'}
@@ -312,10 +335,14 @@ export default function BillablesPage() {
                             Open matter →
                           </Link>
                           <button
-                            onClick={() => generateInvoice(g.matter_id, g.amount)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand"
+                            onClick={() => generateInvoice(g.matter_id, g.uninvoiced_amount)}
+                            disabled={g.uninvoiced_amount <= 0}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            <Receipt size={14} /> Generate invoice (${g.amount.toFixed(2)})
+                            <Receipt size={14} />
+                            {g.uninvoiced_amount > 0
+                              ? `Generate invoice ($${g.uninvoiced_amount.toFixed(2)})`
+                              : 'All time invoiced'}
                           </button>
                         </div>
                       </div>
@@ -380,11 +407,17 @@ export default function BillablesPage() {
                     </p>
                     <div className="flex items-center justify-end gap-2">
                       <button
+                        onClick={() => setViewingInvoiceId(inv.id)}
+                        className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-dark hover:border-brand hover:text-brand"
+                      >
+                        <Eye size={12} /> View
+                      </button>
+                      <button
                         onClick={() => downloadPdf(inv.id)}
                         disabled={downloading === inv.id}
                         className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-dark hover:border-brand hover:text-brand disabled:opacity-50"
                       >
-                        <Download size={12} /> {downloading === inv.id ? 'Downloading…' : 'PDF'}
+                        <Download size={12} /> {downloading === inv.id ? '…' : 'PDF'}
                       </button>
                     </div>
                   </li>
@@ -396,6 +429,10 @@ export default function BillablesPage() {
             <Pagination page={invoicesPage} pages={invoicePages} onChange={setInvoicesPage} />
           )}
         </div>
+      )}
+
+      {viewingInvoiceId != null && (
+        <InvoiceViewerModal paymentId={viewingInvoiceId} onClose={() => setViewingInvoiceId(null)} />
       )}
     </div>
   );

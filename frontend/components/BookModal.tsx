@@ -28,6 +28,7 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useRef, useState } from 'react';
 import { matters, payments, ApiError, type Lawyer } from '@/lib/api';
 import { useAppOptional } from '@/components/AppShell';
+import DateField from '@/components/DateField';
 import { useToast } from '@/components/Toast';
 import { useEscape } from '@/lib/useEscape';
 
@@ -257,12 +258,7 @@ export default function BookModal({ lawyer, onClose }: { lawyer: Lawyer; onClose
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <Field icon={Calendar} label="Preferred time">
-                    <input
-                      className="field"
-                      type="datetime-local"
-                      value={scheduledTime}
-                      onChange={(e) => setScheduledTime(e.target.value)}
-                    />
+                    <DateField mode="datetime" value={scheduledTime} onChange={setScheduledTime} minuteStep={15} />
                   </Field>
                   <Field icon={Clock} label="Duration">
                     <select className="field" value={duration} onChange={(e) => setDuration(Number(e.target.value))}>

@@ -231,6 +231,15 @@ class Channel(models.Model):
         return self.name
 
 
+class MessageKind(models.TextChoices):
+    """Lightweight tagging so the chat timeline can render certain entries
+    differently — e.g. a milestone is shown as a thin status divider
+    instead of a chat bubble."""
+
+    REGULAR = 'regular', 'Regular message'
+    MILESTONE = 'milestone', 'Matter milestone'
+
+
 class Message(models.Model):
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='sent_messages')
@@ -238,6 +247,7 @@ class Message(models.Model):
         'self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies'
     )
     content = models.TextField()
+    kind = models.CharField(max_length=16, choices=MessageKind.choices, default=MessageKind.REGULAR)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -259,7 +269,7 @@ class MessageReaction(models.Model):
 
 class ConsultationStatus(models.TextChoices):
     AWAITING_PAYMENT = 'awaiting_payment', 'Awaiting Payment'
-    PENDING = 'pending', 'Pending Confirmation'
+    PENDING = 'pending', 'Pending'
     CONFIRMED = 'confirmed', 'Confirmed'
     COMPLETED = 'completed', 'Completed'
     CANCELLED = 'cancelled', 'Cancelled'
@@ -515,6 +525,16 @@ class TimeEntry(models.Model):
     rate_snapshot = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     is_billable = models.BooleanField(default=True)
+    #: When a lawyer raises an invoice from /billables we link the time
+    #: entries that the invoice consumes so we can compute "remaining
+    #: un-invoiced" without double-billing.
+    invoice = models.ForeignKey(
+        'payments.Payment',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='time_entries',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

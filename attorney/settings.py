@@ -243,6 +243,25 @@ EMAIL_VERIFY_URL = env.str('EMAIL_VERIFY_URL', 'http://localhost:3000/verify-ema
 WHATSAPP_API_URL = env.str('WHATSAPP_API_URL', '')
 WHATSAPP_API_TOKEN = env.str('WHATSAPP_API_TOKEN', '')
 
+# Platform-managed LLM "pool" keys.
+#
+# When a lawyer hasn't configured their own provider (BYOK), the AI Workflows
+# + AI-Researcher endpoints fall back to one of these platform-paid keys.
+# Pool calls are rate-limited and token-quota'd per-tenant; BYOK calls are
+# not (the lawyer is paying their own bill).
+LLM_POOL_ANTHROPIC_API_KEY = env.str('LLM_POOL_ANTHROPIC_API_KEY', '')
+LLM_POOL_ANTHROPIC_DEFAULT_MODEL = env.str('LLM_POOL_ANTHROPIC_DEFAULT_MODEL', 'claude-opus-4-7')
+LLM_POOL_OPENAI_API_KEY = env.str('LLM_POOL_OPENAI_API_KEY', '')
+LLM_POOL_OPENAI_BASE_URL = env.str('LLM_POOL_OPENAI_BASE_URL', '')
+LLM_POOL_OPENAI_DEFAULT_MODEL = env.str('LLM_POOL_OPENAI_DEFAULT_MODEL', 'gpt-4o')
+LLM_POOL_LOCAL_BASE_URL = env.str('LLM_POOL_LOCAL_BASE_URL', '')
+LLM_POOL_LOCAL_DEFAULT_MODEL = env.str('LLM_POOL_LOCAL_DEFAULT_MODEL', 'llama3.1')
+
+# Defaults applied to every lawyer using the pool. Per-user override lives in
+# the LLMUserQuota model — these are the platform safety net.
+LLM_POOL_MONTHLY_TOKEN_QUOTA = env.int('LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000)
+LLM_POOL_RATE_LIMIT_PER_MINUTE = env.int('LLM_POOL_RATE_LIMIT_PER_MINUTE', 20)
+
 # Sentry — opt-in. If SENTRY_DSN is set and sentry-sdk is installed, errors
 # and slow requests get reported. Otherwise this is a silent no-op.
 SENTRY_DSN = env.str('SENTRY_DSN', '')

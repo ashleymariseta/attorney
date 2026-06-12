@@ -26,6 +26,7 @@ import { StarRating } from '@/components/Stars';
 import { Banner, DecoIcon } from '@/components/Banner';
 import TimeTracker from '@/components/TimeTracker';
 import { useToast } from '@/components/Toast';
+import { RescheduleModal } from '@/components/MatterModals';
 
 export default function DashboardPage() {
   const { me } = useApp();
@@ -114,8 +115,10 @@ function upcoming(consults: Consultation[]) {
 
 /* ---------------- Client ---------------- */
 function ClientDashboard() {
-  const { me, matters, retainers, consultations } = useApp();
+  const toast = useToast();
+  const { me, matters, retainers, consultations, reloadConsultations } = useApp();
   const next = upcoming(consultations).slice(0, 4);
+  const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -157,7 +160,14 @@ function ClientDashboard() {
             />
           ) : (
             <div className="space-y-2">
-              {next.map((c) => <UpcomingRow key={c.id} c={c} who={c.lawyer_detail?.full_name} />)}
+              {next.map((c) => (
+                <UpcomingRow
+                  key={c.id}
+                  c={c}
+                  who={c.lawyer_detail?.full_name}
+                  onReschedule={() => setRescheduling(c)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -178,6 +188,18 @@ function ClientDashboard() {
           )}
         </div>
       </div>
+
+      {rescheduling && (
+        <RescheduleModal
+          consultation={rescheduling}
+          onClose={() => setRescheduling(null)}
+          onDone={async () => {
+            setRescheduling(null);
+            await reloadConsultations();
+            toast.success('Consultation rescheduled — your lawyer will re-confirm.', { major: true });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -188,6 +210,7 @@ function LawyerDashboard() {
   const { me, matters, consultations, reloadConsultations } = useApp();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [rating, setRating] = useState<{ avg: number | null; count: number }>({ avg: null, count: 0 });
+  const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
 
   async function refreshEntries() {
     try {
@@ -265,12 +288,32 @@ function LawyerDashboard() {
                     </p>
                   </div>
                 </div>
-                <button className="btn-primary py-1.5 text-xs" onClick={() => confirm(c.id)}>Confirm</button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-semibold text-ink hover:border-brand"
+                    onClick={() => setRescheduling(c)}
+                  >
+                    Reschedule
+                  </button>
+                  <button className="btn-primary py-1.5 text-xs" onClick={() => confirm(c.id)}>Confirm</button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {rescheduling && (
+        <RescheduleModal
+          consultation={rescheduling}
+          onClose={() => setRescheduling(null)}
+          onDone={async () => {
+            setRescheduling(null);
+            await reloadConsultations();
+            toast.success('Consultation rescheduled — the client will re-confirm.', { major: true });
+          }}
+        />
+      )}
 
       <div className="mt-8">
         <div className="mb-3 flex items-center justify-between">
@@ -310,16 +353,35 @@ function LawyerDashboard() {
   );
 }
 
-function UpcomingRow({ c, who }: { c: any; who?: string }) {
+function UpcomingRow({
+  c,
+  who,
+  onReschedule,
+}: {
+  c: Consultation;
+  who?: string;
+  onReschedule?: () => void;
+}) {
   return (
-    <Link href={`/matters/${c.matter}`} className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3 hover:border-brand">
-      <div>
-        <p className="font-medium">{c.matter_title}</p>
-        <p className="text-xs text-muted">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 hover:border-brand">
+      <Link href={`/matters/${c.matter}`} className="min-w-0 flex-1">
+        <p className="truncate font-medium">{c.matter_title}</p>
+        <p className="truncate text-xs text-muted">
           {who} · {new Date(c.scheduled_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
         </p>
+      </Link>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {onReschedule && c.status !== 'cancelled' && c.status !== 'completed' && (
+          <button
+            type="button"
+            onClick={onReschedule}
+            className="rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:border-brand"
+          >
+            Reschedule
+          </button>
+        )}
+        <span className="badge-teal capitalize">{c.status_display}</span>
       </div>
-      <span className="badge-teal capitalize">{c.status_display}</span>
-    </Link>
+    </div>
   );
 }

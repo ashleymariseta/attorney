@@ -2,13 +2,13 @@ import math
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Q, Sum
 from datetime import timedelta
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -337,6 +337,78 @@ class LawyerViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(ReviewSerializer(qs, many=True).data)
 
 
+def _lawyer_client_summaries(lawyer, request):
+    """Compute the per-client roll-up used by the Clients tab list endpoint
+    and the Clients detail header."""
+    from django.db.models import Max
+
+    retainer_client_ids = set(
+        Retainer.objects.filter(lawyer=lawyer, status=RetainerStatus.ACTIVE)
+        .values_list('client_id', flat=True)
+    )
+    matters_qs = Matter.objects.filter(lawyers=lawyer)
+    worked_client_ids = set(matters_qs.values_list('client_id', flat=True))
+    all_ids = retainer_client_ids | worked_client_ids
+
+    matter_counts = dict(
+        matters_qs.values_list('client_id').annotate(c=Count('id')).values_list('client_id', 'c')
+    )
+    active_counts = dict(
+        matters_qs.exclude(status='closed').values_list('client_id')
+        .annotate(c=Count('id')).values_list('client_id', 'c')
+    )
+
+    pay_qs = Payment.objects.filter(matter__lawyers=lawyer)
+    invoiced = {
+        cid: (val or Decimal('0'))
+        for cid, val in pay_qs.values_list('payer_id').annotate(s=Sum('amount')).values_list('payer_id', 's')
+    }
+    paid = {
+        cid: (val or Decimal('0'))
+        for cid, val in pay_qs.filter(status=PaymentStatus.VERIFIED)
+        .values_list('payer_id').annotate(s=Sum('amount')).values_list('payer_id', 's')
+    }
+    outstanding = {
+        cid: (val or Decimal('0'))
+        for cid, val in pay_qs.filter(status=PaymentStatus.PENDING_REVIEW)
+        .values_list('payer_id').annotate(s=Sum('amount')).values_list('payer_id', 's')
+    }
+    last_consults = dict(
+        Consultation.objects.filter(matter__lawyers=lawyer)
+        .values_list('matter__client_id').annotate(m=Max('scheduled_time'))
+        .values_list('matter__client_id', 'm')
+    )
+
+    users = User.objects.filter(pk__in=all_ids).order_by('first_name', 'last_name')
+    results = []
+    for u in users:
+        avatar = ''
+        if getattr(u, 'avatar', None):
+            try:
+                avatar = request.build_absolute_uri(u.avatar.url)
+            except Exception:
+                pass
+        last_c = last_consults.get(u.id)
+        results.append({
+            'id': u.id,
+            'email': u.email,
+            'first_name': u.first_name,
+            'last_name': u.last_name,
+            'full_name': u.get_full_name() or u.email,
+            'phone_number': getattr(u, 'phone_number', '') or '',
+            'whatsapp_number': getattr(u, 'whatsapp_number', '') or '',
+            'avatar_url': avatar or None,
+            'relationship': 'retainer' if u.id in retainer_client_ids else 'prior_work',
+            'matters_count': matter_counts.get(u.id, 0),
+            'active_matters_count': active_counts.get(u.id, 0),
+            'invoiced_total': str(invoiced.get(u.id, Decimal('0'))),
+            'outstanding_total': str(outstanding.get(u.id, Decimal('0'))),
+            'paid_total': str(paid.get(u.id, Decimal('0'))),
+            'last_consultation_at': last_c.isoformat() if last_c else None,
+        })
+    return {'results': results, 'count': len(results)}
+
+
 class MatterViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = Matter.objects.none()
@@ -425,33 +497,14 @@ class MatterViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='lawyer-clients')
     def lawyer_clients(self, request):
-        """Clients this lawyer can act for — those on retainer + those they've worked with."""
+        """Clients this lawyer can act for — retainers + every client they've
+        worked with — plus aggregate stats per client (matters, invoiced,
+        outstanding, paid, last activity) so the Clients screen can stay on
+        a single roundtrip."""
         if not _is_lawyer(request.user):
             raise PermissionDenied('Only lawyers can list clients.')
 
-        retainer_client_ids = set(
-            Retainer.objects.filter(lawyer=request.user, status=RetainerStatus.ACTIVE)
-            .values_list('client_id', flat=True)
-        )
-        worked_client_ids = set(
-            Matter.objects.filter(lawyers=request.user)
-            .values_list('client_id', flat=True)
-        )
-        all_ids = retainer_client_ids | worked_client_ids
-        users = User.objects.filter(pk__in=all_ids).order_by('first_name', 'last_name')
-
-        results = []
-        for u in users:
-            results.append({
-                'id': u.id,
-                'email': u.email,
-                'first_name': u.first_name,
-                'last_name': u.last_name,
-                'full_name': u.get_full_name() or u.email,
-                'phone_number': getattr(u, 'phone_number', '') or '',
-                'relationship': 'retainer' if u.id in retainer_client_ids else 'prior_work',
-            })
-        return Response({'results': results, 'count': len(results)})
+        return Response(_lawyer_client_summaries(request.user, request))
 
     @action(detail=False, methods=['post'], url_path='create-for-client')
     def create_for_client(self, request):
@@ -720,16 +773,37 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             raise ValidationError('Invalid scheduled_time.')
         if not timezone.is_aware(parsed):
             parsed = timezone.make_aware(parsed)
+        note = (request.data.get('note') or '').strip()[:500]
+        old_time = consultation.scheduled_time
         consultation.scheduled_time = parsed
-        # Re-rescheduling resets a confirmed booking to pending so the other party
-        # has to re-confirm the new slot.
+        # Re-rescheduling resets a confirmed booking to pending so the other
+        # party has to re-confirm the new slot.
         if consultation.status == ConsultationStatus.CONFIRMED:
             consultation.status = ConsultationStatus.PENDING
             consultation.confirmed_at = None
             consultation.save(update_fields=['scheduled_time', 'status', 'confirmed_at'])
         else:
             consultation.save(update_fields=['scheduled_time'])
-        audit(actor=request.user, action='consultation.rescheduled', obj=consultation, request=request)
+
+        # Post a system-style chat message so the counter-party sees the
+        # change in the matter room with the note for context.
+        channel = consultation.matter.channels.filter(channel_type='matter').first()
+        if channel is not None:
+            old_str = old_time.strftime('%a %d %b · %H:%M') if old_time else '—'
+            new_str = parsed.strftime('%a %d %b · %H:%M')
+            content = f'📅 Rescheduled consultation: **{old_str} → {new_str}**'
+            if note:
+                content += f'\n_{note}_'
+            msg = Message.objects.create(channel=channel, sender=request.user, content=content)
+            _broadcast_channel(channel.id, {
+                'kind': 'message.created',
+                'message': MessageSerializer(msg).data,
+            })
+
+        audit(
+            actor=request.user, action='consultation.rescheduled', obj=consultation,
+            request=request, meta={'note': note} if note else None,
+        )
         return Response(self.get_serializer(consultation).data)
 
 
@@ -768,7 +842,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return qs.filter(Q(matter__client=user) | Q(matter__lawyers=user)).distinct()
 
     def perform_create(self, serializer):
-        serializer.save(uploader=self.request.user)
+        doc = serializer.save(uploader=self.request.user)
+        self._broadcast(doc, kind='document.created')
 
     @action(detail=True, methods=['post'])
     def sign(self, request, pk=None):
@@ -780,6 +855,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         doc.signed_at = timezone.now()
         doc.signature_data = signature_data
         doc.save(update_fields=['signed_by', 'signed_at', 'signature_data'])
+        self._broadcast(doc, kind='document.updated')
         # Notify the uploader if it's not the signer.
         if doc.uploader_id and doc.uploader_id != request.user.id:
             notify(
@@ -790,6 +866,17 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 link=f'/matters/{doc.matter_id}',
             )
         return Response(self.get_serializer(doc).data)
+
+    def _broadcast(self, doc, *, kind):
+        """Push a document event to the matter's chat channel so every open
+        client refreshes its docs panel without polling."""
+        channel = doc.matter.channels.filter(channel_type='matter').first()
+        if channel is None:
+            return
+        _broadcast_channel(channel.id, {
+            'kind': kind,
+            'document': DocumentSerializer(doc).data,
+        })
 
 
 class ReviewViewSet(viewsets.ModelViewSet):
@@ -925,6 +1012,86 @@ class TrustTransactionViewSet(viewsets.ModelViewSet):
         return qs.filter(Q(matter__client=user) | Q(matter__lawyers=user)).distinct()
 
 
+class LawyerClientDetailView(APIView):
+    """Full picture for one client: contact details + every matter,
+    consultation and payment they share with this lawyer. Backs the
+    Clients tab's per-client drawer."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, client_id):
+        if not _is_lawyer(request.user):
+            raise PermissionDenied('Only lawyers can view client detail.')
+        try:
+            cid = int(client_id)
+        except (TypeError, ValueError):
+            raise ValidationError('Invalid client id.')
+
+        client = User.objects.filter(pk=cid).first()
+        if client is None:
+            raise NotFound('Client not found.')
+
+        on_retainer = Retainer.objects.filter(
+            client=client, lawyer=request.user, status=RetainerStatus.ACTIVE
+        ).exists()
+        shared_matters = Matter.objects.filter(client=client, lawyers=request.user).distinct()
+        if not on_retainer and not shared_matters.exists():
+            raise PermissionDenied('You have not worked with this client.')
+
+        matters_data = MatterSerializer(
+            shared_matters.order_by('-created_at'), many=True,
+            context={'request': request},
+        ).data
+        payments_qs = Payment.objects.filter(matter__in=shared_matters).order_by('-created_at')
+        payments_data = []
+        for p in payments_qs.select_related('matter'):
+            proof_url = ''
+            if p.proof_of_payment:
+                try:
+                    proof_url = request.build_absolute_uri(p.proof_of_payment.url)
+                except Exception:
+                    pass
+            payments_data.append({
+                'id': p.id,
+                'matter': p.matter_id,
+                'matter_title': p.matter.title,
+                'amount': str(p.amount),
+                'currency': p.currency,
+                'status': p.status,
+                'status_display': p.get_status_display(),
+                'purpose': p.purpose,
+                'reference': p.reference or '',
+                'created_at': p.created_at,
+                'proof_of_payment_url': proof_url or None,
+            })
+        consultations_qs = Consultation.objects.filter(
+            matter__in=shared_matters
+        ).order_by('-scheduled_time')
+        consultations_data = ConsultationSerializer(consultations_qs, many=True).data
+
+        summary = next(
+            (c for c in _lawyer_client_summaries(request.user, request)['results'] if c['id'] == cid),
+            None,
+        )
+
+        return Response({
+            'client': {
+                'id': client.id,
+                'email': client.email,
+                'first_name': client.first_name,
+                'last_name': client.last_name,
+                'full_name': client.get_full_name() or client.email,
+                'phone_number': getattr(client, 'phone_number', '') or '',
+                'whatsapp_number': getattr(client, 'whatsapp_number', '') or '',
+                'avatar_url': request.build_absolute_uri(client.avatar.url) if getattr(client, 'avatar', None) else None,
+            },
+            'summary': summary,
+            'matters': matters_data,
+            'payments': payments_data,
+            'consultations': consultations_data,
+        })
+
+
 class TransactionsView(APIView):
     """Unified money ledger across all of a user's matters (payments + trust)."""
 
@@ -948,6 +1115,9 @@ class TransactionsView(APIView):
         )
         for p in payments:
             can_review = admin or p.matter_id in assigned_matter_ids
+            proof_url = ''
+            if p.proof_of_payment:
+                proof_url = request.build_absolute_uri(p.proof_of_payment.url)
             items.append({
                 'id': f'pay-{p.id}',
                 'kind': 'payment',
@@ -955,6 +1125,7 @@ class TransactionsView(APIView):
                 'purpose': p.purpose,
                 'payer_id': p.payer_id,
                 'has_proof': p.has_proof,
+                'proof_of_payment_url': proof_url or None,
                 'can_review': can_review,
                 'note': p.note or '',
                 'review_note': p.review_note or '',
@@ -987,6 +1158,80 @@ class TransactionsView(APIView):
             Decimal('0'),
         )
         return Response({'count': len(items), 'total_escrow': str(total_in), 'results': items})
+
+
+class TransactionsExportView(APIView):
+    """Same ledger as :class:`TransactionsView`, served as a CSV download
+    so the user can pull a spreadsheet of every payment + trust entry,
+    including a direct link to each proof-of-payment file."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import csv
+        from django.http import HttpResponse
+
+        user = request.user
+        admin = _is_platform_admin(user)
+
+        payments = Payment.objects.select_related('matter')
+        trust = TrustTransaction.objects.select_related('matter')
+        if not admin:
+            scope = Q(matter__client=user) | Q(matter__lawyers=user)
+            payments = payments.filter(scope).distinct()
+            trust = trust.filter(scope).distinct()
+
+        rows = []
+        for p in payments:
+            proof_url = ''
+            if p.proof_of_payment:
+                proof_url = request.build_absolute_uri(p.proof_of_payment.url)
+            rows.append({
+                'id': f'INV-{str(p.id).zfill(5)}',
+                'created_at': p.created_at.isoformat(),
+                'kind': 'payment',
+                'matter': p.matter.title,
+                'label': p.get_purpose_display(),
+                'amount': str(p.amount),
+                'currency': p.currency,
+                'status': p.get_status_display(),
+                'reference': p.reference or '',
+                'note': p.note or '',
+                'review_note': p.review_note or '',
+                'pop': proof_url,
+            })
+        for t in trust:
+            rows.append({
+                'id': f'TRX-{str(t.id).zfill(5)}',
+                'created_at': t.created_at.isoformat(),
+                'kind': 'trust',
+                'matter': t.matter.title,
+                'label': t.get_transaction_type_display(),
+                'amount': str(t.amount),
+                'currency': t.currency,
+                'status': t.get_status_display(),
+                'reference': '',
+                'note': '',
+                'review_note': '',
+                'pop': '',
+            })
+        rows.sort(key=lambda r: r['created_at'], reverse=True)
+
+        filename = f'transactions-{timezone.now().date().isoformat()}.csv'
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([
+            'ID', 'Date', 'Kind', 'Matter', 'Label', 'Amount', 'Currency',
+            'Status', 'Reference', 'Note', 'Reviewer note', 'POP',
+        ])
+        for r in rows:
+            writer.writerow([
+                r['id'], r['created_at'], r['kind'], r['matter'], r['label'],
+                r['amount'], r['currency'], r['status'], r['reference'],
+                r['note'], r['review_note'], r['pop'],
+            ])
+        return response
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):

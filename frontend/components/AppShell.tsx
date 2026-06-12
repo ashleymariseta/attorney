@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, Sparkles, Wallet, X } from 'lucide-react';
+import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, Sparkles, Users, Wallet, X } from 'lucide-react';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import NotificationBell from '@/components/NotificationBell';
 import { emailVerify, ApiError } from '@/lib/api';
@@ -122,6 +122,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const isLawyer = me?.role === 'lawyer';
   const isClient = me?.role?.startsWith('client');
+  const isAdmin = !!(me?.is_staff || me?.role === 'admin');
 
   async function onLogout() {
     await auth.logout();
@@ -183,7 +184,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {navItem('/dashboard', 'Dashboard', <Home size={16} />)}
         {isClient && navItem('/lawyers', 'Find a lawyer', <Search size={16} />)}
         {isClient && navItem('/my-lawyers', 'My Legal Team', <GraduationCap size={16} />)}
-        {navItem('/bookings', isLawyer ? 'Bookings' : 'My Bookings', <Calendar size={16} />, pendingBookings)}
+        {isLawyer && navItem('/clients', 'Clients', <Users size={16} />)}
+        {navItem('/bookings', 'Bookings', <Calendar size={16} />, pendingBookings)}
         {isLawyer && navItem('/billables', 'Billables', <Clock size={16} />)}
         {navItem('/transactions', 'Transactions', <Wallet size={16} />)}
         {isLawyer && (
@@ -196,6 +198,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Always visible — Settings & Matters live in the hamburger on mobile. */}
       <nav className="space-y-1 px-2 pt-3 md:pt-0">
         {navItem('/settings', isLawyer ? 'Settings & Rate' : 'Settings & KYC', <Settings size={16} />)}
+        {isAdmin && navItem('/admin/llm-usage', 'LLM usage (admin)', <KeyRound size={16} />)}
       </nav>
 
       <div className="flex items-center justify-between px-4 pb-1 pt-3">
@@ -402,7 +405,7 @@ function MobileNavStrip({
       : []),
     {
       href: '/bookings',
-      label: isLawyer ? 'Bookings' : 'My Bookings',
+      label: 'Bookings',
       icon: <Calendar size={16} />,
       badge: pendingBookings || undefined,
     },

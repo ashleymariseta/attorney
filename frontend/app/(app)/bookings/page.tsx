@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { consultations as consultationsApi, type Consultation } from '@/lib/api';
 import { useApp } from '@/components/AppShell';
+import { RescheduleModal } from '@/components/MatterModals';
+import { useToast } from '@/components/Toast';
 
 const START_HOUR = 7;
 const END_HOUR = 20;
@@ -36,9 +38,11 @@ function sameDay(a: Date, b: Date) {
 
 export default function BookingsPage() {
   const { consultations, me, reloadConsultations } = useApp();
+  const toast = useToast();
   const isLawyer = me?.role === 'lawyer';
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [selected, setSelected] = useState<Consultation | null>(null);
+  const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const today = new Date();
@@ -59,7 +63,7 @@ export default function BookingsPage() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-line bg-surface px-5 py-3">
         <div>
-          <h1 className="text-xl font-bold">{isLawyer ? 'Bookings' : 'My Bookings'}</h1>
+          <h1 className="text-xl font-bold">Bookings</h1>
           <p className="text-xs text-muted">{weekLabel}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -144,6 +148,22 @@ export default function BookingsPage() {
           isLawyer={isLawyer}
           onClose={() => setSelected(null)}
           onAction={act}
+          onReschedule={() => {
+            setRescheduling(selected);
+            setSelected(null);
+          }}
+        />
+      )}
+
+      {rescheduling && (
+        <RescheduleModal
+          consultation={rescheduling}
+          onClose={() => setRescheduling(null)}
+          onDone={async () => {
+            setRescheduling(null);
+            await reloadConsultations();
+            toast.success('Consultation rescheduled — the other party will re-confirm.', { major: true });
+          }}
         />
       )}
     </div>
@@ -155,11 +175,13 @@ function BookingDetail({
   isLawyer,
   onClose,
   onAction,
+  onReschedule,
 }: {
   c: Consultation;
   isLawyer: boolean;
   onClose: () => void;
   onAction: (id: number, action: 'confirm' | 'cancel' | 'complete') => Promise<void>;
+  onReschedule: () => void;
 }) {
   const dt = new Date(c.scheduled_time);
   return (
@@ -195,11 +217,14 @@ function BookingDetail({
                 <button className="btn-outline" onClick={() => onAction(c.id, 'complete')}>Mark completed</button>
               )}
               {!['cancelled', 'completed'].includes(c.status) && (
+                <button className="btn-outline" onClick={onReschedule}>Reschedule</button>
+              )}
+              {!['cancelled', 'completed'].includes(c.status) && (
                 <button className="btn-outline" onClick={() => onAction(c.id, 'cancel')}>Cancel</button>
               )}
             </div>
           ) : (
-            <div className="pt-2">
+            <div className="space-y-2 pt-2">
               {c.status === 'awaiting_payment' && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Upload your proof of payment in the matter room to submit this booking.</p>
               )}
@@ -208,6 +233,9 @@ function BookingDetail({
               )}
               {c.status === 'confirmed' && (
                 <p className="rounded-lg bg-brand-light/15 px-3 py-2 text-xs text-brand">Confirmed — see you then!</p>
+              )}
+              {!['cancelled', 'completed'].includes(c.status) && (
+                <button className="btn-outline w-full" onClick={onReschedule}>Reschedule</button>
               )}
             </div>
           )}
