@@ -453,7 +453,7 @@ function StatCard({
 }) {
   return (
     <div className="relative overflow-hidden rounded-xl border border-line bg-surface p-3 shadow-card sm:p-5">
-      <DecoIcon icon={Icon} className={`hidden sm:block ${tone === 'emerald' ? 'text-emerald-50' : ''}`} />
+      <DecoIcon icon={Icon} className={tone === 'emerald' ? 'text-emerald-50' : ''} />
       <div className="relative z-10">
         <p className="min-h-[2.4em] text-[10px] uppercase leading-tight tracking-wide text-muted sm:min-h-0 sm:text-xs">
           {label}

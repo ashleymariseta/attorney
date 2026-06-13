@@ -1116,7 +1116,11 @@ class TransactionsView(APIView):
         for p in payments:
             can_review = admin or p.matter_id in assigned_matter_ids
             proof_url = ''
-            if p.proof_of_payment:
+            # Prefer the latest receipt's file if there is one.
+            latest_receipt = p.receipts.exclude(proof_of_payment='').order_by('-created_at').first()
+            if latest_receipt is not None and latest_receipt.proof_of_payment:
+                proof_url = request.build_absolute_uri(latest_receipt.proof_of_payment.url)
+            elif p.proof_of_payment:
                 proof_url = request.build_absolute_uri(p.proof_of_payment.url)
             items.append({
                 'id': f'pay-{p.id}',
@@ -1133,6 +1137,8 @@ class TransactionsView(APIView):
                 'matter_title': p.matter.title,
                 'label': p.get_purpose_display(),
                 'amount': str(p.amount),
+                'total_paid': str(p.total_paid),
+                'outstanding_amount': str(p.outstanding_amount),
                 'currency': p.currency,
                 'status': p.status,
                 'status_display': p.get_status_display(),

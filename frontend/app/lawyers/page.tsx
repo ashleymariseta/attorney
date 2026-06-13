@@ -463,19 +463,28 @@ export default function PublicLawyersPage() {
                     </span>
                   )}
                 </div>
-                <Link href={`/lawyers/${l.id}`} className="relative z-10 flex items-center gap-3 outline-none">
-                  <Image
-                    src={photo(l.id)}
-                    alt={`Headshot of ${l.full_name}`}
-                    width={56}
-                    height={56}
-                    className="h-14 w-14 rounded-full object-cover"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <h3 className="truncate font-semibold group-hover:text-brand">{l.full_name}</h3>
-                      {l.is_verified && <BadgeCheck size={15} className="shrink-0 text-brand" />}
-                    </div>
+                <Link href={`/lawyers/${l.id}`} className="relative z-10 flex items-start gap-3 pr-24 outline-none">
+                  <div className="relative shrink-0">
+                    <Image
+                      src={photo(l.id)}
+                      alt={`Headshot of ${l.full_name}`}
+                      width={56}
+                      height={56}
+                      className="h-14 w-14 rounded-full object-cover"
+                    />
+                    {l.is_verified && (
+                      <span
+                        className="absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full bg-white shadow-sm ring-1 ring-line"
+                        title="Verified practitioner"
+                      >
+                        <BadgeCheck size={12} className="text-brand" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-semibold leading-tight group-hover:text-brand">
+                      {l.full_name}
+                    </h3>
                     <p className="text-xs text-muted">
                       {l.profile?.years_experience ?? 0} yrs · {(l.profile?.jurisdictions ?? []).join(', ') || '—'}
                     </p>

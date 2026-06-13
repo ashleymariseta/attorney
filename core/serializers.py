@@ -370,10 +370,18 @@ class TimeEntrySerializer(serializers.ModelSerializer):
 
 
 class LawyerProfileEditSerializer(serializers.ModelSerializer):
-    """Lawyer-editable profile (rate, areas, bio…)."""
+    """Lawyer-editable profile.
+
+    The hourly rate is *not* writable: it's auto-computed from the country
+    + years-of-experience tier table (Law Society scale by default). We
+    expose ``hourly_rate_min`` / ``hourly_rate_max`` so the UI can show
+    the bracket beside the resolved midpoint.
+    """
 
     firm_detail = serializers.SerializerMethodField()
     practising_certificate_file_url = serializers.SerializerMethodField()
+    hourly_rate_min = serializers.SerializerMethodField()
+    hourly_rate_max = serializers.SerializerMethodField()
 
     class Meta:
         model = LawyerProfile
@@ -381,11 +389,23 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
             'bar_number', 'practising_certificate_number', 'practising_certificate_expires',
             'practising_certificate_file', 'practising_certificate_file_url',
             'country', 'jurisdictions', 'practice_areas', 'languages',
-            'years_experience', 'hourly_rate', 'consultation_price', 'bio',
+            'years_experience', 'hourly_rate', 'hourly_rate_min', 'hourly_rate_max',
+            'consultation_price', 'bio',
             'firm', 'firm_detail',
         ]
-        read_only_fields = ['firm', 'practising_certificate_file_url']
+        read_only_fields = [
+            'firm', 'practising_certificate_file_url',
+            'hourly_rate_min', 'hourly_rate_max',
+        ]
         extra_kwargs = {'practising_certificate_file': {'write_only': True, 'required': False, 'allow_null': True}}
+
+    def get_hourly_rate_min(self, obj):
+        lo, _ = obj.hourly_rate_band
+        return str(lo) if lo is not None else None
+
+    def get_hourly_rate_max(self, obj):
+        _, hi = obj.hourly_rate_band
+        return str(hi) if hi is not None else None
 
     def get_practising_certificate_file_url(self, obj):
         request = self.context.get('request')

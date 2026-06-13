@@ -130,6 +130,70 @@ class PaymentAccount(models.Model):
         return f'{self.get_account_type_display()} · {self.identifier}'
 
 
+class LawyerRateTier(models.Model):
+    """Bar-association hourly-rate bracket. Lawyers don't set their own
+    rate — it's resolved from this table by ``(country, years_experience)``.
+
+    Country uses ISO 3166-1 alpha-2 (e.g. ``"ZW"``). An empty ``country``
+    is the platform-wide default and is used as fallback when a lawyer's
+    country has no rate table configured.
+
+    Brackets are inclusive on ``min_years`` and inclusive on ``max_years``
+    when set; ``max_years=NULL`` means "and above" (the top tier).
+    """
+
+    country = models.CharField(max_length=2, blank=True, db_index=True)
+    min_years = models.PositiveSmallIntegerField()
+    max_years = models.PositiveSmallIntegerField(null=True, blank=True)
+    hourly_min = models.DecimalField(max_digits=10, decimal_places=2)
+    hourly_max = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=8, default='USD')
+    note = models.CharField(max_length=240, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['country', '-min_years']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['country', 'min_years'],
+                name='unique_country_min_years',
+            ),
+        ]
+
+    def __str__(self):
+        max_label = self.max_years if self.max_years is not None else '+'
+        return f'{self.country or "DEFAULT"} · {self.min_years}–{max_label}y → {self.hourly_min}–{self.hourly_max}'
+
+    def matches(self, years: int) -> bool:
+        if years < self.min_years:
+            return False
+        if self.max_years is None:
+            return True
+        return years <= self.max_years
+
+
+def resolve_rate_tier(country: str, years: int):
+    """Find the rate tier for ``(country, years)``. Falls back to the
+    default (empty-country) table when no country-specific rule matches."""
+    candidates = list(LawyerRateTier.objects.filter(country=country or ''))
+    if not candidates and country:
+        candidates = list(LawyerRateTier.objects.filter(country=''))
+    for tier in candidates:
+        if tier.matches(int(years or 0)):
+            return tier
+    return None
+
+
+def compute_hourly_rate(country: str, years: int):
+    """Midpoint hourly rate for billing/invoicing. Returns Decimal or None."""
+    from decimal import Decimal
+
+    tier = resolve_rate_tier(country, years)
+    if tier is None:
+        return None
+    return ((tier.hourly_min + tier.hourly_max) / Decimal('2')).quantize(Decimal('0.01'))
+
+
 class LawyerProfile(models.Model):
     user = models.OneToOneField('core.User', on_delete=models.CASCADE, related_name='lawyer_profile')
     firm = models.ForeignKey(Firm, null=True, blank=True, on_delete=models.SET_NULL, related_name='lawyers')
@@ -143,6 +207,8 @@ class LawyerProfile(models.Model):
     practice_areas = models.JSONField(default=list, blank=True)
     languages = models.JSONField(default=list, blank=True)
     years_experience = models.PositiveIntegerField(default=0)
+    # NOTE: ``hourly_rate`` is derived from ``LawyerRateTier`` by country +
+    # years on every save — lawyers cannot set it manually.
     hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     consultation_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     bio = models.TextField(blank=True)
@@ -150,6 +216,34 @@ class LawyerProfile(models.Model):
 
     def __str__(self):
         return f'LawyerProfile({self.user.email})'
+
+    def save(self, *args, **kwargs):
+        # Pin the rate inside the bar-association bracket for the lawyer's
+        # country + years of experience:
+        #   - if no rate is set, default to the bracket midpoint;
+        #   - if a rate is set, clamp it into [min, max] so a lawyer can't
+        #     bill outside the prescribed scale.
+        tier = resolve_rate_tier(self.country, self.years_experience)
+        if tier is not None:
+            lo, hi = tier.hourly_min, tier.hourly_max
+            if self.hourly_rate is None:
+                from decimal import Decimal as _D
+                self.hourly_rate = ((lo + hi) / _D('2')).quantize(_D('0.01'))
+            elif self.hourly_rate < lo:
+                self.hourly_rate = lo
+            elif self.hourly_rate > hi:
+                self.hourly_rate = hi
+        super().save(*args, **kwargs)
+
+    @property
+    def hourly_rate_band(self):
+        """``(min, max)`` from the resolved tier — used by the UI to show
+        the bracket alongside the midpoint rate. ``(None, None)`` if no
+        tier matches."""
+        tier = resolve_rate_tier(self.country, self.years_experience)
+        if tier is None:
+            return (None, None)
+        return (tier.hourly_min, tier.hourly_max)
 
 
 class KycStatus(models.TextChoices):

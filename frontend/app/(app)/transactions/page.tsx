@@ -671,7 +671,7 @@ function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () 
 function Stat({ label, value, icon }: { label: string; value: string | number; icon?: LucideIcon }) {
   return (
     <div className="relative overflow-hidden rounded-xl border border-line bg-surface p-3 shadow-card sm:p-5">
-      {icon && <DecoIcon icon={icon} className="hidden sm:block" />}
+      {icon && <DecoIcon icon={icon} />}
       <div className="relative z-10">
         <p className="min-h-[2.4em] text-[10px] uppercase leading-tight tracking-wide text-muted sm:min-h-0 sm:text-xs">
           {label}

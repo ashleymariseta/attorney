@@ -123,24 +123,51 @@ class PaymentViewSet(viewsets.ModelViewSet):
         parser_classes=[MultiPartParser, FormParser],
     )
     def upload_proof(self, request, pk=None):
+        from decimal import Decimal
+        from .models import PaymentReceipt
+
         payment = self.get_object()
         if payment.status == PaymentStatus.VERIFIED:
             return Response(
-                {'detail': 'This payment has already been verified.'},
+                {'detail': 'This payment has already been settled in full.'},
                 status=status.HTTP_409_CONFLICT,
             )
 
         upload = ProofOfPaymentUploadSerializer(data=request.data)
         upload.is_valid(raise_exception=True)
 
-        payment.proof_of_payment = upload.validated_data['proof_of_payment']
-        if upload.validated_data.get('reference'):
-            payment.reference = upload.validated_data['reference']
-        if upload.validated_data.get('note'):
-            payment.note = upload.validated_data['note']
-        # Re-submitting a POP after a rejection resets it for review.
-        payment.status = PaymentStatus.PENDING_REVIEW
-        payment.save()
+        outstanding = payment.outstanding_amount
+        raw_amount = upload.validated_data.get('amount')
+        amount = Decimal(raw_amount) if raw_amount is not None else outstanding
+        if amount <= 0:
+            return Response(
+                {'detail': 'Amount must be greater than zero.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if amount > outstanding:
+            return Response(
+                {'detail': f'Amount exceeds the outstanding balance of {outstanding} {payment.currency}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ref = upload.validated_data.get('reference', '') or ''
+        note = upload.validated_data.get('note', '') or ''
+        with transaction.atomic():
+            PaymentReceipt.objects.create(
+                payment=payment,
+                amount=amount,
+                proof_of_payment=upload.validated_data['proof_of_payment'],
+                reference=ref,
+                note=note,
+                status=PaymentStatus.PENDING_REVIEW,
+                submitted_by=request.user,
+            )
+            if ref:
+                payment.reference = ref
+            if note:
+                payment.note = note
+            payment.save(update_fields=['reference', 'note', 'updated_at'])
+            payment.recompute_status()
 
         # A consultation booking that was awaiting payment can now await the
         # lawyer's confirmation.
@@ -159,6 +186,16 @@ class PaymentViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
+        """Verify or reject the latest *pending* receipt on this payment.
+
+        Each verified receipt is posted to the trust ledger as its own
+        deposit transaction (so the trust ledger total moves in step with
+        what the reviewer actually approved). The parent payment's status
+        rolls up to ``partial`` while some is verified, ``verified`` once
+        cumulative paid ≥ amount.
+        """
+        from .models import PaymentReceipt
+
         payment = self.get_object()
         user = request.user
         is_admin = bool(getattr(user, 'is_superuser', False) or getattr(user, 'role', None) == 'admin')
@@ -173,30 +210,64 @@ class PaymentViewSet(viewsets.ModelViewSet):
         decision = review.validated_data['status']
         note = review.validated_data.get('review_note', '')
 
-        if decision == PaymentStatus.VERIFIED and not payment.has_proof:
+        target_id = request.data.get('receipt_id')
+        if target_id:
+            receipt = payment.receipts.filter(pk=target_id, status=PaymentStatus.PENDING_REVIEW).first()
+        else:
+            receipt = payment.receipts.filter(status=PaymentStatus.PENDING_REVIEW).order_by('created_at').first()
+
+        if receipt is None:
             return Response(
-                {'detail': 'Cannot verify a payment with no proof of payment attached.'},
+                {'detail': 'No pending receipt to review on this payment.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if decision == PaymentStatus.VERIFIED and not receipt.proof_of_payment:
+            return Response(
+                {'detail': 'Cannot verify a receipt with no proof of payment attached.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
-            payment.mark_reviewed(reviewer=request.user, status=decision, note=note)
-            if decision == PaymentStatus.VERIFIED and payment.trust_transaction is None:
-                # Post the verified funds into escrow on the internal ledger.
+            receipt.status = decision
+            receipt.reviewed_by = request.user
+            receipt.reviewed_at = timezone.now()
+            receipt.review_note = note
+            receipt.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note'])
+
+            if decision == PaymentStatus.VERIFIED:
+                # One trust transaction per verified receipt so the ledger
+                # reflects the actual installments.
                 txn = TrustTransaction.objects.create(
                     matter=payment.matter,
                     transaction_type=TrustTransactionType.DEPOSIT,
-                    amount=payment.amount,
+                    amount=receipt.amount,
                     currency=payment.currency,
-                    provider_reference=payment.reference,
+                    provider_reference=(receipt.reference or payment.reference),
                     status=TrustTransactionStatus.COMPLETED,
                 )
-                payment.trust_transaction = txn
-                payment.save(update_fields=['trust_transaction', 'updated_at'])
+                # Back-compat: link the first verified receipt's trust
+                # transaction to the parent payment via the existing
+                # OneToOneField so legacy consumers keep working.
+                if payment.trust_transaction is None:
+                    payment.trust_transaction = txn
+
+            payment.reviewed_by = request.user
+            payment.reviewed_at = timezone.now()
+            payment.review_note = note
+            payment.save(update_fields=[
+                'reviewed_by', 'reviewed_at', 'review_note', 'trust_transaction', 'updated_at',
+            ])
+            payment.recompute_status()
 
         try:
             from core.audit import audit
-            audit(actor=request.user, action=f'payment.{decision}', obj=payment, meta={'note': note}, request=request)
+            audit(
+                actor=request.user,
+                action=f'payment.{decision}',
+                obj=payment,
+                meta={'note': note, 'receipt_id': receipt.id, 'amount': str(receipt.amount)},
+                request=request,
+            )
         except Exception:
             pass
         _broadcast_payment(payment, kind='payment.updated')

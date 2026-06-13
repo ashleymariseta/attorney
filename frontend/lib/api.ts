@@ -254,6 +254,8 @@ export interface Transaction {
   payer_id?: number;
   has_proof?: boolean;
   proof_of_payment_url?: string | null;
+  total_paid?: string;
+  outstanding_amount?: string;
   can_review?: boolean;
   note?: string;
   review_note?: string;
@@ -268,7 +270,10 @@ export interface LawyerProfileEdit {
   practice_areas: string[];
   languages: string[];
   years_experience: number;
+  /** Auto-derived from the LawyerRateTier table — read-only on the API. */
   hourly_rate: string | null;
+  hourly_rate_min: string | null;
+  hourly_rate_max: string | null;
   consultation_price: string | null;
   bio: string;
   firm: number | null;
@@ -345,6 +350,22 @@ export interface DocumentItem {
   signed_at?: string | null;
   signature_data?: string;
 }
+export interface PaymentReceiptItem {
+  id: number;
+  payment: number;
+  amount: string;
+  reference: string;
+  note: string;
+  status: 'pending_review' | 'partial' | 'verified' | 'rejected' | 'failed' | string;
+  status_display: string;
+  review_note: string;
+  submitted_by: number | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  proof_of_payment_url: string | null;
+  created_at: string;
+}
+
 export interface Payment {
   id: number;
   matter: number;
@@ -356,6 +377,10 @@ export interface Payment {
   status: string;
   status_display: string;
   proof_of_payment_url: string | null;
+  receipts?: PaymentReceiptItem[];
+  total_paid?: string;
+  total_pending?: string;
+  outstanding_amount?: string;
   created_at: string;
 }
 export interface Paginated<T> {
@@ -1139,9 +1164,12 @@ export const payments = {
   create(payload: { matter: number; amount: string; currency: string; provider: string; purpose: string }) {
     return api<Payment>('/api/v1/payments/', { method: 'POST', body: JSON.stringify(payload) });
   },
-  uploadProof(paymentId: number, file: File, reference: string, note: string) {
+  uploadProof(paymentId: number, file: File, reference: string, note: string, amount?: string | number) {
     const form = new FormData();
     form.append('proof_of_payment', file);
+    if (amount !== undefined && amount !== null && String(amount).length > 0) {
+      form.append('amount', String(amount));
+    }
     if (reference) form.append('reference', reference);
     if (note) form.append('note', note);
     return api<Payment>(`/api/v1/payments/${paymentId}/upload-proof/`, { method: 'POST', body: form });

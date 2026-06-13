@@ -58,6 +58,11 @@ export default function PayInvoiceModal({
   const isCash = method === 'cash';
   const methodLabel = PAY_METHODS.find((m) => m.value === method)?.label ?? '';
 
+  const outstanding = Number(payment.outstanding_amount ?? payment.amount);
+  const totalPaid = Number(payment.total_paid ?? 0);
+  // Amount being paid in this POP — defaults to the full outstanding balance.
+  const [amount, setAmount] = useState<string>(outstanding.toFixed(2));
+
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [matter, setMatter] = useState<Matter | null>(null);
   useEffect(() => {
@@ -81,10 +86,15 @@ export default function PayInvoiceModal({
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) return setError('Choose your proof of payment file.');
+    const n = Number(amount);
+    if (!(n > 0)) return setError('Enter the amount this payment covers.');
+    if (n > outstanding + 0.001) {
+      return setError(`Amount exceeds the outstanding balance of $${outstanding.toFixed(2)}.`);
+    }
     setBusy(true);
     setError('');
     try {
-      await paymentsApi.uploadProof(payment.id, file, reference, `Paid via ${methodLabel}`);
+      await paymentsApi.uploadProof(payment.id, file, reference, `Paid via ${methodLabel}`, n.toFixed(2));
       setStage('done');
       onPaid();
     } catch (err) {
@@ -117,8 +127,13 @@ export default function PayInvoiceModal({
         <div className="border-b border-line bg-canvas px-5 py-3">
           <div className="flex items-end justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Amount due</p>
-              <p className="text-2xl font-bold text-ink">${Number(payment.amount).toFixed(2)}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Outstanding</p>
+              <p className="text-2xl font-bold text-ink">${outstanding.toFixed(2)}</p>
+              {totalPaid > 0 && (
+                <p className="text-[11px] text-sky-700">
+                  ${totalPaid.toFixed(2)} already paid of ${Number(payment.amount).toFixed(2)}
+                </p>
+              )}
             </div>
             <p className="text-xs text-muted">
               {payment.currency} · <span className="capitalize">{payment.purpose?.replace(/_/g, ' ') || 'payment'}</span>
@@ -209,6 +224,22 @@ export default function PayInvoiceModal({
               <p className="text-xs text-muted">
                 Paying via <span className="font-semibold text-ink">{methodLabel}</span> — upload your proof of payment.
               </p>
+              <Field
+                icon={Banknote}
+                label="How much is this payment for?"
+                hint={`Outstanding $${outstanding.toFixed(2)} · partial payments allowed.`}
+              >
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={outstanding}
+                  className="field"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  required
+                />
+              </Field>
               <Field icon={Receipt} label="Proof of payment">
                 <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-line bg-white px-3 py-3 text-sm text-muted hover:border-brand hover:text-brand">
                   <span className="truncate">{fileName || 'Choose a PDF or image…'}</span>

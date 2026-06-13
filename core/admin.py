@@ -4,6 +4,7 @@ from .models import (
     User,
     Firm,
     LawyerProfile,
+    LawyerRateTier,
     ClientProfile,
     Matter,
     Channel,
@@ -45,9 +46,18 @@ class FirmAdmin(admin.ModelAdmin):
 
 @admin.register(LawyerProfile)
 class LawyerProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'firm', 'country', 'bar_number', 'verified_at')
+    list_display = ('user', 'firm', 'country', 'bar_number', 'years_experience', 'hourly_rate', 'verified_at')
     list_filter = ('country',)
     search_fields = ('user__email', 'bar_number')
+    readonly_fields = ('hourly_rate',)
+
+
+@admin.register(LawyerRateTier)
+class LawyerRateTierAdmin(admin.ModelAdmin):
+    list_display = ('country', 'min_years', 'max_years', 'hourly_min', 'hourly_max', 'currency', 'updated_at')
+    list_filter = ('country', 'currency')
+    search_fields = ('country', 'note')
+    ordering = ('country', '-min_years')
 
 
 @admin.register(ClientProfile)

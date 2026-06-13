@@ -9,7 +9,28 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(false);
+  const [direction, setDirection] = useState<'down' | 'up'>('down');
+  const [align, setAlign] = useState<'left' | 'right'>('right');
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  function toggle() {
+    setOpen((prev) => {
+      const next = !prev;
+      if (next && buttonRef.current) {
+        const rect = buttonRef.current.getBoundingClientRect();
+        // Vertical — flip up if there isn't 440px below the bell.
+        const spaceBelow = window.innerHeight - rect.bottom;
+        setDirection(spaceBelow < 440 ? 'up' : 'down');
+        // Horizontal — the popover is 320px wide. If there isn't enough
+        // room to extend leftward (sidebar bell pinned near the screen's
+        // left edge), anchor left and let it extend rightward instead.
+        const spaceLeft = rect.right;
+        setAlign(spaceLeft < 340 ? 'left' : 'right');
+      }
+      return next;
+    });
+  }
 
   async function refresh() {
     try {
@@ -53,8 +74,9 @@ export default function NotificationBell() {
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         aria-label="Notifications"
         className="relative grid h-8 w-8 place-items-center rounded-full text-ink hover:bg-canvas"
       >
@@ -66,7 +88,11 @@ export default function NotificationBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-80 overflow-hidden rounded-lg border border-line bg-white shadow-xl">
+        <div
+          className={`absolute z-30 w-80 overflow-hidden rounded-lg border border-line bg-white shadow-xl ${
+            direction === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+          } ${align === 'left' ? 'left-0' : 'right-0'}`}
+        >
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">Notifications</p>
             {unread > 0 && (

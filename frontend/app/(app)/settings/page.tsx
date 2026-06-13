@@ -278,6 +278,7 @@ export default function SettingsPage() {
     setError('');
     try {
       const updated = await lawyerProfile.update({
+        // Within the bar-association bracket — server clamps to [min, max].
         hourly_rate: form.hourly_rate,
         consultation_price: form.consultation_price,
         country: form.country,
@@ -507,26 +508,35 @@ export default function SettingsPage() {
             <Coins size={14} /> Your rates
           </h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            <RateField icon={Receipt} label="Hourly rate (USD)" hint="Bookings are priced as rate × minutes.">
-              <input className="field" type="number" min="0" step="1" value={form.hourly_rate ?? ''}
-                onChange={(e) => set('hourly_rate', e.target.value)} />
+            <RateField
+              icon={Receipt}
+              label="Hourly rate (USD)"
+              hint={
+                form.hourly_rate_min && form.hourly_rate_max
+                  ? `Within the bar-association bracket $${form.hourly_rate_min}–$${form.hourly_rate_max}.`
+                  : 'Bracket is derived from your country + years of experience.'
+              }
+            >
+              <RateStepper
+                value={form.hourly_rate}
+                min={form.hourly_rate_min ? Number(form.hourly_rate_min) : null}
+                max={form.hourly_rate_max ? Number(form.hourly_rate_max) : null}
+                onChange={(v) => set('hourly_rate', v)}
+              />
             </RateField>
             <RateField icon={Briefcase} label="Consultation base (USD)" hint="Charged per consultation booking.">
               <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
                 onChange={(e) => set('consultation_price', e.target.value)} />
             </RateField>
           </div>
-          {firmDetail && (firmDetail.default_hourly_rate || firmDetail.default_consultation_price) && (
-            <div className="rounded-lg border border-brand-light/30 bg-brand-light/5 p-3 text-xs">
-              <p className="flex items-center gap-1.5 font-semibold text-brand-dark">
-                <Building2 size={12} /> Firm defaults
-              </p>
-              <p className="mt-1 text-muted">
-                {firmDetail.name} suggests {firmDetail.default_hourly_rate ? `$${firmDetail.default_hourly_rate}/hr` : '—'}{' '}
-                · {firmDetail.default_consultation_price ? `$${firmDetail.default_consultation_price} per consult` : '—'}.
-              </p>
-            </div>
-          )}
+          <div className="rounded-lg border border-brand-light/30 bg-brand-light/10 p-3 text-xs text-brand-dark">
+            <p className="font-semibold">About your hourly rate</p>
+            <p className="mt-1">
+              Your rate is pegged to the local bar association&rsquo;s bracket for your country and
+              years of experience. Use <span className="font-mono">+/−</span> to adjust within
+              the bracket. Anything outside the band is clamped on save.
+            </p>
+          </div>
           {formSaveBar()}
         </div>
       </form>
@@ -1302,6 +1312,67 @@ function RateField({
       </div>
       {children}
       {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+const RATE_STEP = 5;
+
+function RateStepper({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: string | null;
+  min: number | null;
+  max: number | null;
+  onChange: (v: string) => void;
+}) {
+  const current = value !== null && value !== '' ? Number(value) : null;
+  const bounded = min !== null && max !== null;
+  function step(direction: 1 | -1) {
+    if (current === null) {
+      onChange(String(min ?? 0));
+      return;
+    }
+    let next = current + direction * RATE_STEP;
+    if (min !== null) next = Math.max(min, next);
+    if (max !== null) next = Math.min(max, next);
+    onChange(next.toFixed(2));
+  }
+  const canDec = current !== null && (min === null || current > min);
+  const canInc = current !== null && (max === null || current < max);
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => step(-1)}
+        disabled={!canDec}
+        aria-label="Decrease hourly rate"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-lg font-bold text-ink hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        −
+      </button>
+      <div className="flex flex-1 items-center justify-center rounded-lg border border-line bg-canvas/40 py-1.5 text-center">
+        <span className="text-lg font-bold text-ink">
+          {current !== null ? `$${current.toFixed(2)}` : '—'}
+        </span>
+        {bounded && (
+          <span className="ml-2 text-[10px] uppercase tracking-wide text-muted">
+            of ${min}–${max}
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => step(1)}
+        disabled={!canInc}
+        aria-label="Increase hourly rate"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-lg font-bold text-ink hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        +
+      </button>
     </div>
   );
 }

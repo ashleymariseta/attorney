@@ -38,7 +38,7 @@ export function Banner({
 export function DecoIcon({ icon: Icon, className = '' }: { icon: LucideIcon; className?: string }) {
   return (
     <Icon
-      className={`pointer-events-none absolute right-4 top-1/2 h-20 w-20 -translate-y-1/2 rotate-12 text-slate-100 ${className}`}
+      className={`pointer-events-none absolute right-3 top-1/2 h-12 w-12 -translate-y-1/2 rotate-12 text-slate-100 sm:right-4 sm:h-20 sm:w-20 ${className}`}
       strokeWidth={1.25}
     />
   );

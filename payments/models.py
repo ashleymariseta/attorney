@@ -26,7 +26,8 @@ class PaymentPurpose(models.TextChoices):
 
 class PaymentStatus(models.TextChoices):
     PENDING_REVIEW = 'pending_review', 'Pending Review'
-    VERIFIED = 'verified', 'Verified'
+    PARTIAL = 'partial', 'Partial'
+    VERIFIED = 'verified', 'Paid'
     REJECTED = 'rejected', 'Rejected'
     FAILED = 'failed', 'Failed'
 
@@ -104,12 +105,126 @@ class Payment(models.Model):
 
     @property
     def has_proof(self):
-        return bool(self.proof_of_payment)
+        return self.receipts.exists() or bool(self.proof_of_payment)
+
+    # --- partial-payment roll-ups ----------------------------------------
+    def _sum_receipts(self, status):
+        from decimal import Decimal
+        total = sum((r.amount for r in self.receipts.all() if r.status == status), start=Decimal('0'))
+        return total
+
+    @property
+    def total_paid(self):
+        return self._sum_receipts(PaymentStatus.VERIFIED)
+
+    @property
+    def total_pending(self):
+        return self._sum_receipts(PaymentStatus.PENDING_REVIEW)
+
+    @property
+    def outstanding_amount(self):
+        from decimal import Decimal
+        out = (self.amount or Decimal('0')) - self.total_paid
+        return out if out > 0 else Decimal('0')
+
+    def recompute_status(self) -> str:
+        """Roll up receipt statuses into the parent payment's status.
+
+        * Any verified slice → ``partial`` until ``total_paid >= amount``.
+        * No verified + at least one pending → ``pending_review``.
+        * No verified + no pending + at least one rejected → ``rejected``.
+        * Empty (no receipts at all) → ``pending_review`` (initial).
+        """
+        from decimal import Decimal
+        receipts = list(self.receipts.all())
+        verified = sum((r.amount for r in receipts if r.status == PaymentStatus.VERIFIED), start=Decimal('0'))
+        has_pending = any(r.status == PaymentStatus.PENDING_REVIEW for r in receipts)
+        has_rejected = any(r.status == PaymentStatus.REJECTED for r in receipts)
+
+        if verified >= self.amount and self.amount > 0:
+            new = PaymentStatus.VERIFIED
+        elif verified > 0:
+            new = PaymentStatus.PARTIAL
+        elif has_pending:
+            new = PaymentStatus.PENDING_REVIEW
+        elif has_rejected:
+            new = PaymentStatus.REJECTED
+        else:
+            new = self.status if self.status else PaymentStatus.PENDING_REVIEW
+        if new != self.status:
+            self.status = new
+            self.save(update_fields=['status', 'updated_at'])
+        return new
 
     def mark_reviewed(self, *, reviewer, status, note=''):
-        """Record a reviewer decision. Caller is responsible for ledger posting."""
-        self.status = status
+        """Legacy helper — still used by the trust-ledger flow. The matching
+        :class:`PaymentReceipt` is created on the fly so the receipt audit
+        trail stays consistent. Caller is responsible for ledger posting."""
         self.reviewed_by = reviewer
         self.reviewed_at = timezone.now()
         self.review_note = note
-        self.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+        self.save(update_fields=['reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+        if status == PaymentStatus.VERIFIED:
+            pending = self.receipts.filter(status=PaymentStatus.PENDING_REVIEW).order_by('created_at').first()
+            if pending is not None:
+                pending.status = PaymentStatus.VERIFIED
+                pending.reviewed_by = reviewer
+                pending.reviewed_at = timezone.now()
+                pending.review_note = note
+                pending.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note'])
+        elif status == PaymentStatus.REJECTED:
+            for r in self.receipts.filter(status=PaymentStatus.PENDING_REVIEW):
+                r.status = PaymentStatus.REJECTED
+                r.reviewed_by = reviewer
+                r.reviewed_at = timezone.now()
+                r.review_note = note
+                r.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note'])
+        self.recompute_status()
+
+
+def receipt_path(instance, filename):
+    matter_id = getattr(instance.payment, 'matter_id', 'unassigned')
+    return f'proofs_of_payment/matter_{matter_id}/{filename}'
+
+
+class PaymentReceipt(models.Model):
+    """One uploaded slice of money against a :class:`Payment`.
+
+    Splitting receipts out of Payment lets a single invoice be settled in
+    multiple installments — each receipt carries its own proof file,
+    review state and amount. The parent ``Payment.status`` is a roll-up:
+    ``verified`` once cumulative paid ≥ amount, ``partial`` while some has
+    been verified, ``pending_review`` while at least one receipt is
+    awaiting decision.
+    """
+
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name='receipts')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    proof_of_payment = models.FileField(
+        upload_to=receipt_path,
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
+    )
+    reference = models.CharField(max_length=256, blank=True)
+    note = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=32,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.PENDING_REVIEW,
+    )
+    review_note = models.TextField(blank=True)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='submitted_receipts',
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='reviewed_receipts',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['payment', 'status'])]

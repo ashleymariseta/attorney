@@ -95,6 +95,8 @@ function buildTimeline(
 function statusTone(status: string): string {
   if (/verified|confirmed|completed|active|paid/i.test(status))
     return 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200';
+  if (/partial/i.test(status))
+    return 'bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200';
   if (/pending|awaiting|review/i.test(status))
     return 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200';
   if (/rejected|failed|cancelled|declined/i.test(status))
@@ -264,6 +266,15 @@ function PaymentCard({
   const isPending = /pending|awaiting|review/i.test(p.status);
   const hasProof = !!p.proof_of_payment_url;
   const [viewingProof, setViewingProof] = useState(false);
+  const paid = Number(p.total_paid ?? 0);
+  const outstanding = Number(p.outstanding_amount ?? p.amount);
+  const isPaid = p.status === 'verified';
+  const isPartial = p.status === 'partial' && paid > 0 && outstanding > 0;
+  const statusLabel = isPaid
+    ? 'PAID'
+    : isPartial
+    ? `Partial · $${outstanding.toFixed(2)} due`
+    : (p.status_display || p.status);
   return (
     <>
     <TimelineCard
@@ -274,10 +285,16 @@ function PaymentCard({
         <>
           ${Number(p.amount).toFixed(2)} {p.currency} ·{' '}
           <span className="capitalize">{p.purpose?.replace(/_/g, ' ') || 'Payment'}</span>
+          {isPartial && (
+            <>
+              {' · '}
+              <span className="text-sky-700">${paid.toFixed(2)} paid</span>
+            </>
+          )}
         </>
       }
       status={p.status}
-      statusLabel={p.status_display || p.status}
+      statusLabel={statusLabel}
       time={p.created_at}
       mine={mine}
       by={by}
@@ -441,6 +458,10 @@ function PaymentDetail({
 }) {
   const [viewingProof, setViewingProof] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(false);
+  const [viewingReceiptUrl, setViewingReceiptUrl] = useState<string | null>(null);
+  const paid = Number(p.total_paid ?? 0);
+  const outstanding = Number(p.outstanding_amount ?? p.amount);
+  const receipts = p.receipts ?? [];
   return (
     <div className="space-y-0">
       <div className="mb-3 flex items-center justify-between">
@@ -454,19 +475,70 @@ function PaymentDetail({
       <Row label="Provider">{p.provider?.replace(/_/g, ' ') || '—'}</Row>
       {p.reference && <Row label="Reference">{p.reference}</Row>}
       <Row label="Created">{new Date(p.created_at).toLocaleString()}</Row>
-      <Row label="Proof of payment">
-        {p.proof_of_payment_url ? (
-          <button
-            type="button"
-            onClick={() => setViewingProof(true)}
-            className="inline-flex items-center gap-1 text-brand hover:underline"
-          >
-            <Eye size={12} /> View file
-          </button>
-        ) : (
-          <span className="text-muted">Not yet uploaded</span>
-        )}
-      </Row>
+      {paid > 0 && (
+        <div className="my-3 grid grid-cols-3 gap-2 rounded-xl border border-line bg-canvas p-3 text-xs">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Invoice</p>
+            <p className="font-semibold text-ink">${Number(p.amount).toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Paid</p>
+            <p className="font-semibold text-emerald-700">${paid.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className={`text-[10px] font-semibold uppercase tracking-wide ${outstanding > 0 ? 'text-amber-700' : 'text-muted'}`}>
+              Outstanding
+            </p>
+            <p className={`font-semibold ${outstanding > 0 ? 'text-amber-700' : 'text-muted'}`}>
+              ${outstanding.toFixed(2)}
+            </p>
+          </div>
+        </div>
+      )}
+      {receipts.length > 0 ? (
+        <div className="my-3">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Receipts</p>
+          <ul className="space-y-1.5">
+            {receipts.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <p className="font-semibold text-ink">${Number(r.amount).toFixed(2)}</p>
+                  <p className="text-[11px] text-muted">
+                    {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                    {r.reference && ` · ${r.reference}`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <StatusPill status={r.status} label={r.status_display || r.status} />
+                  {r.proof_of_payment_url && (
+                    <button
+                      type="button"
+                      onClick={() => setViewingReceiptUrl(r.proof_of_payment_url!)}
+                      className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-2 py-0.5 text-[11px] font-semibold text-ink hover:border-brand"
+                    >
+                      <Eye size={11} />
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <Row label="Proof of payment">
+          {p.proof_of_payment_url ? (
+            <button
+              type="button"
+              onClick={() => setViewingProof(true)}
+              className="inline-flex items-center gap-1 text-brand hover:underline"
+            >
+              <Eye size={12} /> View file
+            </button>
+          ) : (
+            <span className="text-muted">Not yet uploaded</span>
+          )}
+        </Row>
+      )}
       <button
         type="button"
         onClick={() => setViewingInvoice(true)}
@@ -491,6 +563,13 @@ function PaymentDetail({
       )}
       {viewingInvoice && (
         <InvoiceViewerModal paymentId={p.id} onClose={() => setViewingInvoice(false)} />
+      )}
+      {viewingReceiptUrl && (
+        <FileViewerModal
+          url={viewingReceiptUrl}
+          title="Receipt"
+          onClose={() => setViewingReceiptUrl(null)}
+        />
       )}
     </div>
   );

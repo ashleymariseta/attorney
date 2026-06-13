@@ -53,7 +53,7 @@ function Stat({
         dark ? 'bg-brand-dark text-white' : 'border border-line bg-surface'
       }`}
     >
-      {icon && <DecoIcon icon={icon} className={`hidden sm:block ${dark ? 'opacity-30' : ''}`} />}
+      {icon && <DecoIcon icon={icon} className={dark ? 'opacity-30' : ''} />}
       <div className="relative z-10">
         <p className={`min-h-[2.4em] text-[10px] uppercase leading-tight tracking-wide sm:min-h-0 sm:text-xs ${dark ? 'text-white/60' : 'text-muted'}`}>
           {label}
@@ -253,7 +253,7 @@ function LawyerDashboard() {
         <Stat label="To confirm" value={pending.length} sub="bookings" icon={CalendarClock} />
         <Stat label="Billable (7d)" value={`$${billableWeek.toFixed(0)}`} icon={Wallet} />
         <div className="relative overflow-hidden rounded-xl border border-line bg-surface p-3 shadow-card sm:p-5">
-          <DecoIcon icon={StarIcon} className="hidden sm:block" />
+          <DecoIcon icon={StarIcon} />
           <div className="relative z-10">
             <p className="min-h-[2.4em] text-[10px] uppercase leading-tight tracking-wide text-muted sm:min-h-0 sm:text-xs">Rating</p>
             <div className="mt-0.5 flex flex-col items-start gap-0.5 sm:mt-1 sm:flex-row sm:items-center sm:gap-2">
@@ -370,7 +370,8 @@ function UpcomingRow({
           {who} · {new Date(c.scheduled_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
         </p>
       </Link>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
+        <span className="badge-teal capitalize">{c.status_display}</span>
         {onReschedule && c.status !== 'cancelled' && c.status !== 'completed' && (
           <button
             type="button"
@@ -380,7 +381,6 @@ function UpcomingRow({
             Reschedule
           </button>
         )}
-        <span className="badge-teal capitalize">{c.status_display}</span>
       </div>
     </div>
   );
