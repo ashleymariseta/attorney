@@ -1,0 +1,46 @@
+name: attorney_mobile
+description: Attorney — Lawyer-on-demand mobile app (mirrors the web product).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # HTTP + auth persistence
+  dio: ^5.7.0
+  flutter_secure_storage: ^9.2.2
+
+  # State + routing
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.6.1
+
+  # Realtime
+  web_socket_channel: ^3.0.1
+
+  # UX building blocks
+  intl: ^0.19.0
+  url_launcher: ^6.3.0
+  image_picker: ^1.1.2
+  file_picker: ^8.1.0
+  cached_network_image: ^3.4.1
+  shared_preferences: ^2.3.2
+  flutter_markdown: ^0.7.4
+  lucide_icons_flutter: ^3.1.14+2
+  audioplayers: ^6.7.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/img/
+    - assets/img/logos/
+    - assets/audio/
