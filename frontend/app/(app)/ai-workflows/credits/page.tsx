@@ -151,26 +151,6 @@ export default function AiCreditsPage() {
               </table>
             </div>
           )}
-
-          {/* Recent ledger */}
-          {account && account.transactions.length > 0 && (
-            <>
-              <h2 className="mt-8 text-sm font-semibold uppercase tracking-wide text-muted">Recent activity</h2>
-              <ul className="mt-3 divide-y divide-line rounded-xl border border-line bg-white shadow-sm">
-                {account.transactions.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                    <span className="text-muted">
-                      {new Date(t.created_at).toLocaleDateString()} · {t.kind_display}
-                      {t.note ? ` · ${t.note}` : ''}
-                    </span>
-                    <span className={t.amount >= 0 ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600'}>
-                      {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
         </>
       )}
 
