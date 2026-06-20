@@ -1105,6 +1105,96 @@ export const aiCredits = {
   },
 };
 
+// ---- Precedents + documents ----
+
+export interface PrecedentVariable {
+  key: string;
+  label: string;
+  help?: string;
+  required?: boolean;
+  type?: 'text' | 'textarea' | 'date';
+}
+
+export interface Precedent {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  matter_type: string;
+  category: string;
+  workflow_template: number | null;
+  variables: PrecedentVariable[];
+  body?: string;
+}
+
+export interface WorkflowDocumentItem {
+  id: number;
+  title: string;
+  body: string;
+  status: 'draft' | 'final';
+  status_display: string;
+  field_values: Record<string, string>;
+  precedent: number | null;
+  precedent_name: string;
+  workflow: number | null;
+  sent_matter: number | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const precedents = {
+  list(params?: { workflow_template?: number; category?: string }) {
+    const qs = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v != null) as [string, string][]
+        ).toString()
+      : '';
+    return api<Paginated<Precedent>>(`/api/v1/precedents/${qs}`);
+  },
+  get(id: number) {
+    return api<Precedent>(`/api/v1/precedents/${id}/`);
+  },
+};
+
+export const workflowDocuments = {
+  list(params?: { workflow?: number }) {
+    const qs = params?.workflow ? `?workflow=${params.workflow}` : '';
+    return api<Paginated<WorkflowDocumentItem>>(`/api/v1/workflow-documents/${qs}`);
+  },
+  get(id: number) {
+    return api<WorkflowDocumentItem>(`/api/v1/workflow-documents/${id}/`);
+  },
+  create(input: {
+    precedent?: number;
+    field_values?: Record<string, string>;
+    stage_result?: number;
+    workflow?: number;
+    title?: string;
+    body?: string;
+  }) {
+    return api<WorkflowDocumentItem>('/api/v1/workflow-documents/', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  update(id: number, patch: Partial<Pick<WorkflowDocumentItem, 'title' | 'body' | 'status'>>) {
+    return api<WorkflowDocumentItem>(`/api/v1/workflow-documents/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  },
+  remove(id: number) {
+    return api<void>(`/api/v1/workflow-documents/${id}/`, { method: 'DELETE' });
+  },
+  sendToMatter(id: number, matter: number) {
+    return api<WorkflowDocumentItem>(`/api/v1/workflow-documents/${id}/send-to-matter/`, {
+      method: 'POST',
+      body: JSON.stringify({ matter }),
+    });
+  },
+};
+
 export const workflows = {
   templates() {
     return api<Paginated<WorkflowTemplate>>('/api/v1/workflow-templates/');

@@ -491,3 +491,85 @@ class AICreditTransaction(models.Model):
 
     def __str__(self):
         return f'{self.get_kind_display()} {self.amount:+,} → {self.balance_after:,}'
+
+
+# ---------------------------------------------------------------------------
+# Precedents (document templates) + generated documents
+#
+# A PrecedentTemplate is a reusable legal document skeleton in Markdown with
+# ``{{placeholders}}``. A lawyer fills a few fields, we prepopulate the body,
+# and they get an editable WorkflowDocument they can edit, download, or send
+# to a matter. Documents can also be created from a Claude stage output.
+# ---------------------------------------------------------------------------
+
+class PrecedentTemplate(models.Model):
+    """A reusable Markdown document precedent with fillable variables."""
+
+    slug = models.SlugField(unique=True, max_length=120)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    matter_type = models.CharField(max_length=120, blank=True)
+    category = models.CharField(
+        max_length=80, blank=True,
+        help_text='e.g. Affidavits, Pleadings, Agreements, Letters.',
+    )
+    workflow_template = models.ForeignKey(
+        WorkflowTemplate, null=True, blank=True, on_delete=models.SET_NULL, related_name='precedents'
+    )
+    #: Markdown body with ``{{key}}`` placeholders.
+    body = models.TextField()
+    #: Ordered fields to collect, each: {
+    #:   "key": "case_number", "label": "Case number",
+    #:   "help": "", "required": true, "type": "text"|"textarea"|"date"
+    #: }
+    variables = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class DocumentStatus(models.TextChoices):
+    DRAFT = 'draft', 'Draft'
+    FINAL = 'final', 'Final'
+
+
+class WorkflowDocument(models.Model):
+    """An editable Markdown document produced by a lawyer — prepopulated from a
+    precedent, copied from a Claude stage output, or written from scratch."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='workflow_documents'
+    )
+    workflow = models.ForeignKey(
+        Workflow, null=True, blank=True, on_delete=models.SET_NULL, related_name='documents'
+    )
+    precedent = models.ForeignKey(
+        PrecedentTemplate, null=True, blank=True, on_delete=models.SET_NULL, related_name='documents'
+    )
+    title = models.CharField(max_length=300)
+    body = models.TextField(blank=True)
+    #: The values used to prepopulate the body from the precedent.
+    field_values = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, choices=DocumentStatus.choices, default=DocumentStatus.DRAFT)
+    #: Set once this document has been pushed into a matter room.
+    sent_matter = models.ForeignKey(
+        'core.Matter', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    sent_document = models.ForeignKey(
+        'core.Document', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.title

@@ -20,19 +20,26 @@ from .models import (
     LLMProviderConfig,
     LLMUsageLog,
     LLMUserQuota,
+    PrecedentTemplate,
     StageResult,
     StageStatus,
     Workflow,
+    WorkflowDocument,
     WorkflowStage,
     WorkflowTemplate,
 )
+from .precedents import render_precedent
 from .providers import ProviderError, get_provider, pool_config
 from .serializers import (
     AICreditAccountSerializer,
     AICreditOrderCreateSerializer,
     AICreditOrderSerializer,
     AICreditPlanSerializer,
+    PrecedentTemplateListSerializer,
+    PrecedentTemplateSerializer,
     StageResultSerializer,
+    WorkflowDocumentCreateSerializer,
+    WorkflowDocumentSerializer,
     WorkflowCreateSerializer,
     WorkflowDetailSerializer,
     WorkflowListSerializer,
@@ -529,4 +536,117 @@ class AICreditOrderViewSet(viewsets.ModelViewSet):
         )
         _notify_admins_of_credit_order(order, buyer=request.user)
         return Response(AICreditOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+
+# ---- Precedents + documents (editor) ---------------------------------------
+
+class PrecedentTemplateViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catalogue of document precedents. Supports ``?workflow_template=<id>``
+    and ``?category=<name>`` filters."""
+
+    permission_classes = [IsAuthenticated]
+    queryset = PrecedentTemplate.objects.filter(is_active=True)
+
+    def get_serializer_class(self):
+        return PrecedentTemplateSerializer if self.action == 'retrieve' else PrecedentTemplateListSerializer
+
+    def get_queryset(self):
+        qs = PrecedentTemplate.objects.filter(is_active=True)
+        wt = self.request.query_params.get('workflow_template')
+        cat = self.request.query_params.get('category')
+        if wt:
+            qs = qs.filter(workflow_template_id=wt)
+        if cat:
+            qs = qs.filter(category__iexact=cat)
+        return qs
+
+
+class WorkflowDocumentViewSet(viewsets.ModelViewSet):
+    """A lawyer's editable documents. Create from a precedent (+field values),
+    from a Claude stage result, or from raw title/body; edit; send to a matter."""
+
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+    queryset = WorkflowDocument.objects.none()
+
+    def get_serializer_class(self):
+        return WorkflowDocumentCreateSerializer if self.action == 'create' else WorkflowDocumentSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return WorkflowDocument.objects.none()
+        qs = WorkflowDocument.objects.filter(owner=self.request.user)
+        wf = self.request.query_params.get('workflow')
+        if wf:
+            qs = qs.filter(workflow_id=wf)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        ser = WorkflowDocumentCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        v = ser.validated_data
+
+        precedent = v.get('precedent')
+        stage_result = v.get('stage_result')
+        title = (v.get('title') or '').strip()
+        body = v.get('body') or ''
+        field_values = v.get('field_values') or {}
+        workflow = v.get('workflow')
+
+        if precedent is not None:
+            body = render_precedent(precedent.body, field_values)
+            title = title or precedent.name
+        elif stage_result is not None:
+            if stage_result.stage.workflow.owner_id != request.user.id:
+                return Response(
+                    {'detail': 'Not your stage result.'}, status=status.HTTP_403_FORBIDDEN
+                )
+            body = stage_result.output_text or ''
+            title = title or stage_result.stage.title
+            workflow = workflow or stage_result.stage.workflow
+
+        # Only attach a workflow the caller owns.
+        if workflow is not None and workflow.owner_id != request.user.id:
+            workflow = None
+
+        doc = WorkflowDocument.objects.create(
+            owner=request.user,
+            precedent=precedent,
+            workflow=workflow,
+            title=(title or 'Untitled document')[:300],
+            body=body,
+            field_values=field_values,
+        )
+        return Response(WorkflowDocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='send-to-matter')
+    def send_to_matter(self, request, pk=None):
+        """Create a matter draft document from this document and link it."""
+        from django.db.models import Q
+
+        from core.models import Document as MatterDocument
+        from core.models import Matter
+
+        doc = self.get_object()
+        user = request.user
+        # Mirror MatterViewSet visibility: own matters + firm-shared ones.
+        scope = Q(client=user) | Q(lawyers=user)
+        firm_id = getattr(getattr(user, 'lawyer_profile', None), 'firm_id', None)
+        if firm_id:
+            scope |= Q(lawyers__lawyer_profile__firm_id=firm_id)
+        matter = Matter.objects.filter(scope, pk=request.data.get('matter')).distinct().first()
+        if matter is None:
+            return Response(
+                {'detail': 'Matter not found or you are not a participant.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        mdoc = MatterDocument.objects.create(
+            matter=matter, uploader=request.user, title=doc.title[:240],
+            body=doc.body, kind='draft',
+        )
+        doc.sent_matter = matter
+        doc.sent_document = mdoc
+        doc.sent_at = timezone.now()
+        doc.save(update_fields=['sent_matter', 'sent_document', 'sent_at', 'updated_at'])
+        return Response(WorkflowDocumentSerializer(doc).data)
 

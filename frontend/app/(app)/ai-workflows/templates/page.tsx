@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, FileText, Wand2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FileText, Loader2, Wand2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { workflows, type WorkflowTemplate, ApiError } from '@/lib/api';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -13,7 +13,9 @@ export default function WorkflowTemplatesPage() {
   const toast = useToast();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [starting, setStarting] = useState<number | null>(null);
+  const [picked, setPicked] = useState<WorkflowTemplate | null>(null);
+  const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -25,18 +27,21 @@ export default function WorkflowTemplatesPage() {
     })();
   }, []);
 
-  async function start(t: WorkflowTemplate) {
-    const name = prompt(`Name this ${t.name} workflow:`, t.name);
-    if (!name?.trim()) return;
-    setStarting(t.id);
+  function openStart(t: WorkflowTemplate) {
+    setPicked(t);
+    setName(t.name);
+  }
+
+  async function create() {
+    if (!picked || !name.trim()) return;
+    setCreating(true);
     try {
-      const wf = await workflows.create({ template: t.id, name: name.trim() });
+      const wf = await workflows.create({ template: picked.id, name: name.trim() });
       toast.success(`Workflow “${wf.name}” created.`, { major: true });
       router.push(`/ai-workflows/${wf.id}`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not start workflow.');
-    } finally {
-      setStarting(null);
+      setCreating(false);
     }
   }
 
@@ -79,18 +84,47 @@ export default function WorkflowTemplatesPage() {
               </div>
               <div className="mt-4 flex items-center justify-end gap-2 border-t border-line pt-3">
                 <button
-                  disabled={starting === t.id}
-                  onClick={() => start(t)}
+                  onClick={() => openStart(t)}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand disabled:opacity-50"
                 >
                   <Wand2 size={14} />
-                  {starting === t.id ? 'Starting…' : 'Start workflow'}
+                  Start workflow
                   <ArrowRight size={14} />
                 </button>
               </div>
             </li>
           ))}
         </ul>
+      )}
+
+      {picked && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => !creating && setPicked(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-bold">Start workflow</h3>
+                <p className="mt-0.5 text-sm text-muted">From “{picked.name}” template.</p>
+              </div>
+              <button onClick={() => !creating && setPicked(null)} className="text-muted hover:text-ink"><X size={18} /></button>
+            </div>
+            <label className="mt-4 block text-xs font-semibold text-muted">Workflow name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && create()}
+              className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"
+              placeholder="e.g. Answering Affidavit — Doe v Acme"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setPicked(null)} disabled={creating} className="btn-outline">Cancel</button>
+              <button onClick={create} disabled={creating || !name.trim()} className="btn-primary">
+                {creating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                {creating ? 'Creating…' : 'Create workflow'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

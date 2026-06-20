@@ -9,9 +9,11 @@ from .models import (
     AIPlatformSettings,
     LLMProvider,
     LLMProviderConfig,
+    PrecedentTemplate,
     StageResult,
     StageStatus,
     Workflow,
+    WorkflowDocument,
     WorkflowStage,
     WorkflowStatus,
     WorkflowTemplate,
@@ -218,3 +220,62 @@ class AICreditOrderCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AICreditOrder
         fields = ['plan', 'reference', 'method', 'note', 'proof_of_payment']
+
+
+# ---- Precedents + documents -----------------------------------------------
+
+class PrecedentTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrecedentTemplate
+        fields = [
+            'id', 'slug', 'name', 'description', 'matter_type', 'category',
+            'workflow_template', 'variables', 'body',
+        ]
+        read_only_fields = fields
+
+
+class PrecedentTemplateListSerializer(serializers.ModelSerializer):
+    """Lighter shape for the picker — omits the (potentially large) body."""
+
+    class Meta:
+        model = PrecedentTemplate
+        fields = [
+            'id', 'slug', 'name', 'description', 'matter_type', 'category',
+            'workflow_template', 'variables',
+        ]
+        read_only_fields = fields
+
+
+class WorkflowDocumentSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    precedent_name = serializers.CharField(source='precedent.name', read_only=True, default='')
+
+    class Meta:
+        model = WorkflowDocument
+        fields = [
+            'id', 'title', 'body', 'status', 'status_display', 'field_values',
+            'precedent', 'precedent_name', 'workflow', 'sent_matter', 'sent_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'status_display', 'precedent_name', 'sent_matter', 'sent_at',
+            'created_at', 'updated_at',
+        ]
+
+
+class WorkflowDocumentCreateSerializer(serializers.Serializer):
+    """Create a document from one of three sources: a precedent (+field values),
+    a Claude stage result, or raw title/body."""
+
+    title = serializers.CharField(required=False, allow_blank=True, max_length=300)
+    body = serializers.CharField(required=False, allow_blank=True)
+    precedent = serializers.PrimaryKeyRelatedField(
+        queryset=PrecedentTemplate.objects.filter(is_active=True), required=False, allow_null=True
+    )
+    field_values = serializers.DictField(required=False)
+    stage_result = serializers.PrimaryKeyRelatedField(
+        queryset=StageResult.objects.all(), required=False, allow_null=True
+    )
+    workflow = serializers.PrimaryKeyRelatedField(
+        queryset=Workflow.objects.all(), required=False, allow_null=True
+    )

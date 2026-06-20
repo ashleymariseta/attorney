@@ -11,8 +11,10 @@ from .models import (
     LLMProviderConfig,
     LLMUsageLog,
     LLMUserQuota,
+    PrecedentTemplate,
     StageResult,
     Workflow,
+    WorkflowDocument,
     WorkflowStage,
     WorkflowTemplate,
 )
@@ -243,3 +245,22 @@ class AICreditTransactionAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(PrecedentTemplate)
+class PrecedentTemplateAdmin(admin.ModelAdmin):
+    """Document precedents (Markdown with {{placeholders}}). Define the fillable
+    fields in ``variables`` as a list of {key, label, help, required, type}."""
+
+    list_display = ('name', 'category', 'matter_type', 'workflow_template', 'is_active', 'updated_at')
+    list_filter = ('is_active', 'category', 'matter_type')
+    search_fields = ('name', 'slug', 'description')
+    prepopulated_fields = {'slug': ('name',)}
+
+
+@admin.register(WorkflowDocument)
+class WorkflowDocumentAdmin(admin.ModelAdmin):
+    list_display = ('title', 'owner', 'precedent', 'status', 'sent_matter', 'updated_at')
+    list_filter = ('status',)
+    search_fields = ('title', 'owner__email')
+    readonly_fields = ('sent_matter', 'sent_document', 'sent_at', 'created_at', 'updated_at')

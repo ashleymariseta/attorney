@@ -1,11 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   CheckCircle2,
   ChevronDown,
   CircleDashed,
+  FileText,
   PencilLine,
   Play,
 } from 'lucide-react';
@@ -13,12 +15,14 @@ import { useEffect, useState } from 'react';
 import {
   workflows,
   workflowStages,
+  workflowDocuments,
   ApiError,
   type WorkflowDetail,
   type WorkflowStageData,
 } from '@/lib/api';
 import { SkeletonCard } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
+import Markdown from '@/components/Markdown';
 
 const STATUS_TINT: Record<string, string> = {
   pending: 'bg-canvas text-muted',
@@ -30,10 +34,26 @@ const STATUS_TINT: Record<string, string> = {
 export default function WorkflowDetailPage({ params }: { params: { id: string } }) {
   const id = Number(params.id);
   const toast = useToast();
+  const router = useRouter();
   const [wf, setWf] = useState<WorkflowDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [saving, setSaving] = useState<number | null>(null);
+
+  async function saveAsDocument(stage: WorkflowStageData) {
+    const result = stage.latest_result;
+    if (!result) return;
+    setSaving(stage.id);
+    try {
+      const doc = await workflowDocuments.create({ stage_result: result.id, workflow: id });
+      toast.success('Saved to documents — opening the editor.', { major: true });
+      router.push(`/ai-workflows/documents/${doc.id}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save document.');
+      setSaving(null);
+    }
+  }
 
   async function reload() {
     const data = await workflows.get(id);
@@ -162,14 +182,25 @@ export default function WorkflowDetailPage({ params }: { params: { id: string } 
                       {stage.latest_result.error ? (
                         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{stage.latest_result.error}</p>
                       ) : (
-                        <pre className="whitespace-pre-wrap rounded-lg bg-white p-3 text-sm text-ink ring-1 ring-inset ring-line">
-                          {stage.latest_result.output_text}
-                        </pre>
+                        <div className="rounded-lg bg-white p-4 ring-1 ring-inset ring-line">
+                          <Markdown>{stage.latest_result.output_text}</Markdown>
+                        </div>
                       )}
-                      <p className="mt-1 text-[11px] text-muted">
-                        {stage.latest_result.tokens_in} in / {stage.latest_result.tokens_out} out tokens ·{' '}
-                        {new Date(stage.latest_result.created_at).toLocaleString()}
-                      </p>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <p className="text-[11px] text-muted">
+                          {stage.latest_result.tokens_in} in / {stage.latest_result.tokens_out} out tokens ·{' '}
+                          {new Date(stage.latest_result.created_at).toLocaleString()}
+                        </p>
+                        {!stage.latest_result.error && (
+                          <button
+                            onClick={() => saveAsDocument(stage)}
+                            disabled={saving === stage.id}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink hover:border-brand disabled:opacity-50"
+                          >
+                            <FileText size={12} /> {saving === stage.id ? 'Saving…' : 'Save as document'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 rounded-lg border border-dashed border-line bg-white p-3 text-xs text-muted">
