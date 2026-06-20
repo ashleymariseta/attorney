@@ -957,7 +957,12 @@ export const coResearcher = {
    * saved conversation, onError with a message.
    */
   async askStream(
-    payload: { question: string; scope?: CorpusKind[]; conversation_id?: number | null },
+    payload: {
+      question: string;
+      scope?: CorpusKind[];
+      conversation_id?: number | null;
+      attachments?: { name: string; media_type: string; data: string }[];
+    },
     handlers: {
       onDelta: (text: string) => void;
       onDone: (conversation: ResearchConversationDetail) => void;

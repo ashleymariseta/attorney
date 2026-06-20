@@ -73,6 +73,44 @@ class StreamAskTests(APITestCase):
         conv.refresh_from_db()
         self.assertEqual(len(conv.messages), 4)  # two turns
 
+    def test_content_blocks_builds_for_each_type(self):
+        import base64
+        from corpus.views import _content_blocks, AttachmentError
+
+        # No attachments → plain string.
+        self.assertEqual(_content_blocks('hi', []), 'hi')
+
+        text_b64 = base64.b64encode(b'clause 1: payment terms').decode()
+        blocks = _content_blocks('summarise', [
+            {'name': 'a.pdf', 'media_type': 'application/pdf', 'data': 'AAAA'},
+            {'name': 'b.png', 'media_type': 'image/png', 'data': 'BBBB'},
+            {'name': 'c.txt', 'media_type': 'text/plain', 'data': text_b64},
+        ])
+        kinds = [b['type'] for b in blocks]
+        self.assertEqual(kinds, ['document', 'image', 'text', 'text'])  # +question text last
+        self.assertIn('payment terms', blocks[2]['text'])
+        self.assertEqual(blocks[-1]['text'], 'summarise')
+
+        with self.assertRaises(AttachmentError):
+            _content_blocks('q', [{'name': f'{i}', 'media_type': 'text/plain', 'data': 'AA'} for i in range(6)])
+        with self.assertRaises(AttachmentError):
+            _content_blocks('q', [{'name': 'x.exe', 'media_type': 'application/x-msdownload', 'data': 'AA'}])
+
+    @patch('corpus.views.get_provider', fake_stream_adapter)
+    def test_stream_with_attachment_records_name(self):
+        import base64
+        from corpus.models import ResearchConversation
+        self.client.force_authenticate(self.user)
+        res = self.client.post('/api/v1/co-researcher/ask/stream/', {
+            'question': 'summarise this contract',
+            'attachments': [{'name': 'contract.txt', 'media_type': 'text/plain',
+                             'data': base64.b64encode(b'the parties agree...').decode()}],
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        b''.join(res.streaming_content)
+        conv = ResearchConversation.objects.get(owner=self.user)
+        self.assertIn('contract.txt', conv.messages[0]['content'])
+
     @patch('corpus.views.get_provider', fake_stream_adapter)
     def test_cannot_open_another_users_conversation(self):
         from corpus.models import ResearchConversation

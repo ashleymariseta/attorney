@@ -1,17 +1,51 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, BookText, Loader2, MessageSquare, PanelRightClose, PanelRightOpen,
-  Plus, Send, ShieldCheck, Sparkles, Trash2, User as UserIcon,
+  ArrowLeft, BookText, Check, Copy, Download, FileDown, FileText, Loader2, MessageSquare,
+  PanelRightClose, PanelRightOpen, Paperclip, Plus, Send, ShieldCheck, Sparkles, Trash2,
+  User as UserIcon, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  coResearcher, ApiError,
+  coResearcher, workflowDocuments, ApiError,
   type CorpusKind, type ResearchConversationSummary,
 } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import Markdown from '@/components/Markdown';
+
+const MAX_FILES = 5;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json';
+
+interface Attachment {
+  name: string;
+  media_type: string;
+  data: string; // base64 (no data: prefix)
+}
+
+function readAsBase64(file: File): Promise<Attachment> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const res = String(r.result);
+      resolve({ name: file.name, media_type: file.type || 'application/octet-stream', data: res.split(',')[1] ?? '' });
+    };
+    r.onerror = () => reject(new Error('Could not read file'));
+    r.readAsDataURL(file);
+  });
+}
+
+function downloadText(filename: string, text: string, type: string) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 const KIND_ORDER: CorpusKind[] = ['case', 'judgement', 'rules', 'constitution', 'statute'];
 const KIND_LABEL: Record<CorpusKind, string> = {
@@ -33,19 +67,56 @@ interface Msg {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
+  attachments?: string[]; // file names (display only)
 }
 
 export default function CoResearcherPage() {
   const toast = useToast();
+  const router = useRouter();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [scope, setScope] = useState<CorpusKind[]>([]);
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [convos, setConvos] = useState<ResearchConversationSummary[]>([]);
   const [currentId, setCurrentId] = useState<number | null>(null);
   const [sidebar, setSidebar] = useState(true);
   const idRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFiles(list: FileList | null) {
+    if (!list) return;
+    const picked = Array.from(list);
+    if (files.length + picked.length > MAX_FILES) {
+      toast.error(`Up to ${MAX_FILES} files per message.`);
+      return;
+    }
+    for (const f of picked) {
+      if (f.size > MAX_FILE_BYTES) {
+        toast.error(`“${f.name}” is too large (max 10 MB).`);
+        continue;
+      }
+      try {
+        const att = await readAsBase64(f);
+        setFiles((cur) => [...cur, att]);
+      } catch {
+        toast.error(`Could not read “${f.name}”.`);
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  }
+
+  async function saveAsDoc(content: string) {
+    try {
+      const title = (content.split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') || 'AI-Researcher answer').slice(0, 120);
+      const doc = await workflowDocuments.create({ title, body: content });
+      toast.success('Saved to documents — opening the editor.', { major: true });
+      router.push(`/ai-workflows/documents/${doc.id}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save document.');
+    }
+  }
 
   async function loadConvos() {
     try {
@@ -90,12 +161,17 @@ export default function CoResearcherPage() {
   }
 
   async function send(text: string) {
-    const question = text.trim();
+    const attached = files;
+    const question = text.trim() || (attached.length ? 'Please review the attached file(s).' : '');
     if (!question || busy) return;
-    const userMsg: Msg = { id: ++idRef.current, role: 'user', content: question };
+    const userMsg: Msg = {
+      id: ++idRef.current, role: 'user', content: question,
+      attachments: attached.map((a) => a.name),
+    };
     const assistant: Msg = { id: ++idRef.current, role: 'assistant', content: '', streaming: true };
     setMessages((m) => [...m, userMsg, assistant]);
     setInput('');
+    setFiles([]);
     setBusy(true);
 
     const setAssistant = (fn: (prev: string) => string) =>
@@ -103,7 +179,7 @@ export default function CoResearcherPage() {
 
     try {
       await coResearcher.askStream(
-        { question, scope, conversation_id: currentId },
+        { question, scope, conversation_id: currentId, attachments: attached },
         {
           onDelta: (t) => setAssistant((prev) => prev + t),
           onDone: (conv) => {
@@ -114,7 +190,8 @@ export default function CoResearcherPage() {
           onError: (detail) => {
             toast.error(detail);
             setMessages((m) => m.filter((x) => x.id !== assistant.id && x.id !== userMsg.id));
-            setInput(question);
+            setInput(text);
+            setFiles(attached);
           },
         },
       );
@@ -171,7 +248,7 @@ export default function CoResearcherPage() {
           </div>
         ) : (
           <div className="flex-1 space-y-5 py-6">
-            {messages.map((m) => <MessageBubble key={m.id} msg={m} />)}
+            {messages.map((m) => <MessageBubble key={m.id} msg={m} onSaveDoc={saveAsDoc} />)}
             <div ref={endRef} />
           </div>
         )}
@@ -179,19 +256,41 @@ export default function CoResearcherPage() {
         {/* Composer */}
         <div className="sticky bottom-0 mt-2 bg-canvas/80 pb-2 pt-2 backdrop-blur">
           <ScopeBar scope={scope} onToggle={(k) => setScope((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]))} onClear={() => setScope([])} />
+
+          {files.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {files.map((f, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11px] text-ink">
+                  <Paperclip size={11} className="text-muted" />
+                  <span className="max-w-[160px] truncate">{f.name}</span>
+                  <button onClick={() => setFiles((c) => c.filter((_, idx) => idx !== i))} className="text-muted hover:text-rose-600"><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => { e.preventDefault(); send(input); }}
             className="mt-2 flex items-end gap-2 rounded-2xl border border-line bg-white p-2 shadow-sm focus-within:border-brand"
           >
+            <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => onPickFiles(e.target.files)} />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              title="Attach files (PDF, image, text)"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition hover:bg-canvas hover:text-brand-dark"
+            >
+              <Paperclip size={17} />
+            </button>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
               rows={1}
-              placeholder="Ask a legal question…"
+              placeholder="Ask a legal question, or attach a document…"
               className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
             />
-            <button type="submit" disabled={busy || !input.trim()} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-dark text-white transition hover:bg-brand disabled:opacity-40">
+            <button type="submit" disabled={busy || (!input.trim() && files.length === 0)} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-dark text-white transition hover:bg-brand disabled:opacity-40">
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             </button>
           </form>
@@ -234,12 +333,23 @@ export default function CoResearcherPage() {
   );
 }
 
-function MessageBubble({ msg }: { msg: Msg }) {
+function MessageBubble({ msg, onSaveDoc }: { msg: Msg; onSaveDoc: (content: string) => void }) {
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end gap-2">
-        <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-brand-dark px-4 py-2.5 text-[13px] text-white">
-          {msg.content}
+        <div className="max-w-[85%] space-y-1.5">
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1">
+              {msg.attachments.map((n, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-brand-light/40 px-2 py-0.5 text-[11px] text-brand-dark">
+                  <Paperclip size={10} /> <span className="max-w-[160px] truncate">{n}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl rounded-tr-sm bg-brand-dark px-4 py-2.5 text-[13px] text-white">
+            {msg.content}
+          </div>
         </div>
         <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-light/40 text-brand-dark">
           <UserIcon size={14} />
@@ -254,13 +364,35 @@ function MessageBubble({ msg }: { msg: Msg }) {
       </span>
       <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-line bg-white px-4 py-2.5 shadow-sm">
         {msg.content ? (
-          <Markdown size="sm">{msg.content}</Markdown>
+          <>
+            <Markdown size="sm">{msg.content}</Markdown>
+            {!msg.streaming && <AnswerToolbar content={msg.content} onSaveDoc={onSaveDoc} />}
+          </>
         ) : (
           <span className="inline-flex items-center gap-1.5 text-[13px] text-muted">
             <Loader2 size={13} className="animate-spin" /> Thinking…
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+function AnswerToolbar({ content, onSaveDoc }: { content: string; onSaveDoc: (content: string) => void }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard?.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  const btn = 'inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted transition hover:bg-canvas hover:text-ink';
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line pt-2">
+      <button onClick={copy} className={btn}>{copied ? <Check size={12} /> : <Copy size={12} />}{copied ? 'Copied' : 'Copy'}</button>
+      <button onClick={() => downloadText('answer.md', content, 'text/markdown;charset=utf-8')} className={btn}><Download size={12} /> .md</button>
+      <button onClick={() => downloadText('answer.txt', content, 'text/plain;charset=utf-8')} className={btn}><FileDown size={12} /> .txt</button>
+      <button onClick={() => onSaveDoc(content)} className={btn}><FileText size={12} /> Save as document</button>
     </div>
   );
 }

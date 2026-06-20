@@ -64,16 +64,71 @@ def _system_prompt(scope):
     )
 
 
-def _build_messages(question, history):
-    """Sanitise the optional prior turns and append the new question."""
+def _build_messages(question, history, content=None):
+    """Sanitise the optional prior turns and append the new user message. When
+    ``content`` is given (e.g. text + attachment blocks) it's used verbatim for
+    the new turn; otherwise the plain question string is used."""
     msgs = []
     for m in (history or [])[-_MAX_HISTORY:]:
         role = m.get('role')
-        content = (m.get('content') or '').strip()
-        if role in ('user', 'assistant') and content:
-            msgs.append({'role': role, 'content': content[:8000]})
-    msgs.append({'role': 'user', 'content': question})
+        c = (m.get('content') or '').strip()
+        if role in ('user', 'assistant') and c:
+            msgs.append({'role': role, 'content': c[:8000]})
+    msgs.append({'role': 'user', 'content': content if content is not None else question})
     return msgs
+
+
+# Attachment limits (base64 inflates ~33%, so these are the on-the-wire caps).
+_MAX_ATTACHMENTS = 5
+_MAX_ATTACHMENT_B64 = 14_000_000  # ~10 MB raw per file
+_TEXT_MEDIA_PREFIXES = ('text/',)
+_TEXT_MEDIA_EXACT = {'application/json', 'application/xml'}
+
+
+class AttachmentError(Exception):
+    pass
+
+
+def _content_blocks(question, attachments):
+    """Build a Claude message content value from the question + attachments.
+
+    Returns a plain string when there are no attachments, otherwise a list of
+    content blocks (document for PDFs, image for images, text for text files),
+    with the question text last. Raises :class:`AttachmentError` on bad input."""
+    import base64
+
+    atts = attachments or []
+    if not atts:
+        return question
+    if len(atts) > _MAX_ATTACHMENTS:
+        raise AttachmentError(f'Too many files (max {_MAX_ATTACHMENTS}).')
+
+    blocks = []
+    for a in atts:
+        media = (a.get('media_type') or '').lower()
+        data = a.get('data') or ''
+        name = (a.get('name') or 'file')[:200]
+        if not data:
+            continue
+        if len(data) > _MAX_ATTACHMENT_B64:
+            raise AttachmentError(f'“{name}” is too large (max ~10 MB).')
+        if media == 'application/pdf':
+            blocks.append({'type': 'document', 'source': {
+                'type': 'base64', 'media_type': 'application/pdf', 'data': data}})
+        elif media.startswith('image/'):
+            blocks.append({'type': 'image', 'source': {
+                'type': 'base64', 'media_type': media, 'data': data}})
+        elif media.startswith(_TEXT_MEDIA_PREFIXES) or media in _TEXT_MEDIA_EXACT:
+            try:
+                text = base64.b64decode(data).decode('utf-8', 'replace')[:50_000]
+            except Exception:
+                raise AttachmentError(f'Could not read “{name}”.')
+            blocks.append({'type': 'text', 'text': f'Attached file "{name}":\n\n{text}'})
+        else:
+            raise AttachmentError(f'Unsupported file type for “{name}” ({media or "unknown"}).')
+
+    blocks.append({'type': 'text', 'text': question})
+    return blocks
 
 
 class CorpusCollectionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -163,7 +218,16 @@ class CoResearcherStreamView(APIView):
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
         conversation_id = request.data.get('conversation_id')
+        attachments = request.data.get('attachments') or []
         user = request.user
+
+        # Build the user message content (text + any file blocks) up-front so a
+        # bad attachment fails fast with a 400 rather than mid-stream.
+        try:
+            content = _content_blocks(data['question'], attachments)
+        except AttachmentError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        att_names = [(a.get('name') or 'file')[:120] for a in attachments if a.get('data')]
 
         # Resume an existing conversation (owner-checked) or start a new one.
         conv = None
@@ -192,7 +256,7 @@ class CoResearcherStreamView(APIView):
                 owner=user, question=data['question'], scope=data.get('scope') or [],
                 provider=config.provider, model=config.default_model or '',
             )
-            messages = _build_messages(data['question'], prior)
+            messages = _build_messages(data['question'], prior, content=content)
             adapter = get_provider(config)
             full, tokens_in, tokens_out, model = '', 0, 0, config.default_model
             settled = False
@@ -228,10 +292,14 @@ class CoResearcherStreamView(APIView):
             q.tokens_out = tokens_out
             q.save(update_fields=['answer_text', 'model', 'tokens_in', 'tokens_out'])
 
-            # Persist the chat thread for the history sidebar.
+            # Persist the chat thread for the history sidebar. We store only the
+            # question text plus a note of attachment names (not the file bytes).
             nonlocal conv
+            user_note = data['question']
+            if att_names:
+                user_note += '\n\n_📎 ' + ', '.join(att_names) + '_'
             thread = prior + [
-                {'role': 'user', 'content': data['question']},
+                {'role': 'user', 'content': user_note},
                 {'role': 'assistant', 'content': full},
             ]
             if conv is None:
