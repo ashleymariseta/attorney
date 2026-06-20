@@ -61,11 +61,6 @@ class _WorkflowsScreenState extends ConsumerState<WorkflowsScreen> {
             icon: const Icon(LucideIcons.bookOpen),
             onPressed: () => context.go(Routes.aiResearcher),
           ),
-          IconButton(
-            tooltip: 'Providers',
-            icon: const Icon(LucideIcons.key),
-            onPressed: () => context.go(Routes.llmProviders),
-          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -106,7 +101,6 @@ class _WorkflowsScreenState extends ConsumerState<WorkflowsScreen> {
                 if (list.isEmpty)
                   _EmptyWorkflows(
                     onTemplates: () => context.go(Routes.workflowTemplates),
-                    onProviders: () => context.go(Routes.llmProviders),
                   )
                 else
                   for (final w in list)
@@ -150,7 +144,7 @@ class _IntroBanner extends StatelessWidget {
           ),
           SizedBox(height: 6),
           Text(
-            'Grounded retrieval, verifiable citations, your provider of choice per stage.',
+            'Grounded retrieval, verifiable citations, human-in-the-loop approvals.',
             style: TextStyle(color: Colors.white70, fontSize: 12.5),
           ),
         ],
@@ -160,9 +154,8 @@ class _IntroBanner extends StatelessWidget {
 }
 
 class _EmptyWorkflows extends StatelessWidget {
-  const _EmptyWorkflows({required this.onTemplates, required this.onProviders});
+  const _EmptyWorkflows({required this.onTemplates});
   final VoidCallback onTemplates;
-  final VoidCallback onProviders;
 
   @override
   Widget build(BuildContext context) {
@@ -202,12 +195,6 @@ class _EmptyWorkflows extends StatelessWidget {
                 onPressed: onTemplates,
                 icon: const Icon(LucideIcons.fileText, size: 16),
                 label: const Text('Browse templates'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: onProviders,
-                icon: const Icon(LucideIcons.key, size: 16),
-                label: const Text('Add a provider'),
               ),
             ],
           ),

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, FileText, KeyRound, Sparkles } from 'lucide-react';
+import { ArrowRight, FileText, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { workflows, type WorkflowListItem } from '@/lib/api';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -26,7 +26,7 @@ export default function MyWorkflowsPage() {
         <div>
           <h1 className="text-2xl font-bold">AI Workflows</h1>
           <p className="mt-1 text-sm text-muted">
-            Stage-based legal-work pipelines — grounded retrieval, verifiable citations, your provider of choice per stage.
+            Stage-based legal-work pipelines — grounded retrieval, verifiable citations, human-in-the-loop approvals.
           </p>
         </div>
         <Link
@@ -56,9 +56,6 @@ export default function MyWorkflowsPage() {
           <div className="mt-5 flex justify-center gap-2">
             <Link href="/ai-workflows/templates" className="btn-primary">
               <FileText size={14} /> Browse templates
-            </Link>
-            <Link href="/ai-workflows/providers" className="btn-outline">
-              <KeyRound size={14} /> Add a provider
             </Link>
           </div>
         </div>

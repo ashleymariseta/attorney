@@ -606,27 +606,6 @@ class Endpoints {
   Future<Map<String, dynamic>> approveWorkflowStage(int stageId) =>
       _post('/api/v1/workflow-stages/$stageId/approve/', (j) => j as Map<String, dynamic>);
 
-  Future<List<Map<String, dynamic>>> listLlmProviders() =>
-      _get('/api/v1/llm-providers/', (j) {
-        final results = (j['results'] as List? ?? const []);
-        return results.cast<Map<String, dynamic>>();
-      });
-
-  Future<List<Map<String, dynamic>>> supportedLlmProviders() =>
-      _get('/api/v1/llm-providers/supported/', (j) {
-        if (j is List) return j.cast<Map<String, dynamic>>();
-        final results = (j['results'] as List? ?? const []);
-        return results.cast<Map<String, dynamic>>();
-      });
-
-  Future<Map<String, dynamic>> createLlmProvider(Map<String, dynamic> payload) =>
-      _post('/api/v1/llm-providers/', (j) => j as Map<String, dynamic>, data: payload);
-
-  Future<Map<String, dynamic>> updateLlmProvider(int id, Map<String, dynamic> payload) =>
-      _patch('/api/v1/llm-providers/$id/', (j) => j as Map<String, dynamic>, data: payload);
-
-  Future<void> deleteLlmProvider(int id) => _delete('/api/v1/llm-providers/$id/');
-
   Future<List<Map<String, dynamic>>> listCorpusCollections() =>
       _get('/api/v1/corpus-collections/', (j) {
         final results = (j['results'] as List? ?? const []);

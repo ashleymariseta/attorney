@@ -6,6 +6,7 @@ WorkflowStage rows so per-matter overrides (chosen provider, model, prompt)
 don't drift back into the shared template.
 """
 from django.conf import settings
+from django.core.validators import FileExtensionValidator
 from django.db import models
 
 
@@ -174,11 +175,22 @@ class LLMUserQuota(models.Model):
     owner = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='llm_quota'
     )
-    monthly_token_quota = models.PositiveIntegerField(null=True, blank=True)
+    daily_token_quota = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Max tokens this user may spend per calendar day. Blank = platform default.',
+    )
+    weekly_token_quota = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Max tokens this user may spend per ISO week (Mon–Sun). Blank = platform default.',
+    )
+    monthly_token_quota = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Max tokens this user may spend per calendar month. Blank = platform default.',
+    )
     rate_limit_per_minute = models.PositiveIntegerField(null=True, blank=True)
     is_pool_disabled = models.BooleanField(
         default=False,
-        help_text='When True the user must BYOK; pool-key fallback is denied.',
+        help_text='When True the user is blocked from the shared AI provider entirely.',
     )
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -210,3 +222,259 @@ class LLMProviderConfig(models.Model):
 
     def __str__(self):
         return f'{self.get_provider_display()} · {self.label or self.default_model}'
+
+
+# ---------------------------------------------------------------------------
+# Platform AI settings (singleton) — the per-lawyer usage throttles. Editable
+# in Django admin; seeded from the LLM_POOL_* env settings on first load.
+# ---------------------------------------------------------------------------
+
+class AIPlatformSettings(models.Model):
+    """Singleton holding the default AI usage throttles applied to every
+    lawyer. Per-user overrides still live in :class:`LLMUserQuota`; these are
+    the platform-wide fallbacks. Token quotas stack (day/week/month) — set any
+    to 0 to disable that window."""
+
+    daily_token_quota = models.PositiveIntegerField(default=20_000)
+    weekly_token_quota = models.PositiveIntegerField(default=60_000)
+    monthly_token_quota = models.PositiveIntegerField(default=200_000)
+    rate_limit_per_minute = models.PositiveIntegerField(default=20)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI platform settings'
+        verbose_name_plural = 'AI platform settings'
+
+    def __str__(self):
+        return 'AI platform settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # enforce a single row
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        """Return the singleton, creating it (seeded from env settings) on
+        first access so existing LLM_POOL_* values carry over."""
+        from django.conf import settings as dj_settings
+
+        obj, _ = cls.objects.get_or_create(
+            pk=1,
+            defaults={
+                'daily_token_quota': getattr(dj_settings, 'LLM_POOL_DAILY_TOKEN_QUOTA', 20_000),
+                'weekly_token_quota': getattr(dj_settings, 'LLM_POOL_WEEKLY_TOKEN_QUOTA', 60_000),
+                'monthly_token_quota': getattr(dj_settings, 'LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000),
+                'rate_limit_per_minute': getattr(dj_settings, 'LLM_POOL_RATE_LIMIT_PER_MINUTE', 20),
+            },
+        )
+        return obj
+
+
+# ---------------------------------------------------------------------------
+# AI credits — prepaid token balance unlocked via proof-of-payment.
+#
+# A lawyer's AI runs are charged to a single AICreditAccount: their firm's
+# account if they belong to a firm, otherwise their own. An admin defines
+# AICreditPlans (token packs / subscriptions); a lawyer or firm submits an
+# AICreditOrder with a proof of payment; once an admin verifies it, the plan's
+# token_credits are granted to the account via an append-only ledger.
+# ---------------------------------------------------------------------------
+
+class CreditPlanPeriod(models.TextChoices):
+    ONE_TIME = 'one_time', 'One-time top-up'
+    MONTHLY = 'monthly', 'Monthly'
+    QUARTERLY = 'quarterly', 'Quarterly'
+    ANNUAL = 'annual', 'Annual'
+
+
+class AICreditPlan(models.Model):
+    """A purchasable pack/subscription that grants a number of AI token
+    credits when an order against it is verified."""
+
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(unique=True)
+    description = models.TextField(blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=8, default='USD')
+    token_credits = models.PositiveBigIntegerField(
+        help_text='AI tokens granted to the account when an order for this plan is verified.'
+    )
+    period = models.CharField(
+        max_length=16, choices=CreditPlanPeriod.choices, default=CreditPlanPeriod.ONE_TIME
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['price']
+
+    def __str__(self):
+        return f'{self.name} · {self.token_credits:,} credits · {self.price} {self.currency}'
+
+
+class AICreditAccount(models.Model):
+    """Prepaid AI token balance for a firm or an individual lawyer. Balance is
+    a cache kept in lock-step with the append-only transaction ledger; never
+    mutate it directly — go through :mod:`workflows.credits`."""
+
+    owner_user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.CASCADE, related_name='ai_credit_account',
+    )
+    owner_firm = models.OneToOneField(
+        'core.Firm', null=True, blank=True,
+        on_delete=models.CASCADE, related_name='ai_credit_account',
+    )
+    balance = models.BigIntegerField(
+        default=0, help_text='Current AI token balance. May dip slightly negative if a call overshoots.'
+    )
+    lifetime_granted = models.PositiveBigIntegerField(default=0)
+    lifetime_spent = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name='ai_credit_account_exactly_one_owner',
+                check=(
+                    models.Q(owner_user__isnull=False, owner_firm__isnull=True)
+                    | models.Q(owner_user__isnull=True, owner_firm__isnull=False)
+                ),
+            )
+        ]
+
+    @property
+    def owner_label(self) -> str:
+        if self.owner_firm_id:
+            return f'Firm: {self.owner_firm}'
+        if self.owner_user_id:
+            return f'Lawyer: {self.owner_user}'
+        return 'Unassigned'
+
+    def __str__(self):
+        return f'{self.owner_label} · {self.balance:,} credits'
+
+
+class CreditOrderStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending review'
+    VERIFIED = 'verified', 'Verified'
+    REJECTED = 'rejected', 'Rejected'
+    CANCELLED = 'cancelled', 'Cancelled'
+
+
+def ai_credit_pop_path(instance, filename):
+    who = instance.owner_firm_id and f'firm_{instance.owner_firm_id}' or f'user_{instance.owner_user_id}'
+    return f'ai_credit_pops/{who}/{filename}'
+
+
+class AICreditOrder(models.Model):
+    """A request to buy AI credits, evidenced by a proof of payment. An admin
+    verifies it in Django admin; verification grants ``token_credits`` to the
+    resolved account. Either ``owner_firm`` or ``owner_user`` is set."""
+
+    owner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.CASCADE, related_name='ai_credit_orders',
+    )
+    owner_firm = models.ForeignKey(
+        'core.Firm', null=True, blank=True,
+        on_delete=models.CASCADE, related_name='ai_credit_orders',
+    )
+    plan = models.ForeignKey(
+        AICreditPlan, null=True, blank=True, on_delete=models.SET_NULL, related_name='orders'
+    )
+    token_credits = models.PositiveBigIntegerField(
+        help_text='Credits granted on verification. Defaults from the plan; override for ad-hoc grants.'
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=8, default='USD')
+    reference = models.CharField(max_length=256, blank=True, help_text='Bank / mobile-money reference.')
+    method = models.CharField(max_length=32, blank=True, help_text='ecocash / innbucks / bank / cash / other.')
+
+    proof_of_payment = models.FileField(
+        upload_to=ai_credit_pop_path, blank=True, null=True,
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
+        help_text='Uploaded proof of payment (PDF or image).',
+    )
+    note = models.TextField(blank=True, help_text='Payer-supplied note.')
+
+    status = models.CharField(
+        max_length=16, choices=CreditOrderStatus.choices, default=CreditOrderStatus.PENDING
+    )
+    # Subscription term, if relevant (informational; metering is credit-based).
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='reviewed_ai_credit_orders',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['status', '-created_at'])]
+        constraints = [
+            models.CheckConstraint(
+                name='ai_credit_order_exactly_one_owner',
+                check=(
+                    models.Q(owner_user__isnull=False, owner_firm__isnull=True)
+                    | models.Q(owner_user__isnull=True, owner_firm__isnull=False)
+                ),
+            )
+        ]
+
+    @property
+    def owner_label(self) -> str:
+        if self.owner_firm_id:
+            return f'Firm: {self.owner_firm}'
+        if self.owner_user_id:
+            return f'Lawyer: {self.owner_user}'
+        return 'Unassigned'
+
+    def __str__(self):
+        return f'Order({self.token_credits:,} credits · {self.owner_label} · {self.get_status_display()})'
+
+
+class CreditTxnKind(models.TextChoices):
+    GRANT = 'grant', 'Grant (purchase verified)'
+    DEBIT = 'debit', 'Debit (AI usage)'
+    REFUND = 'refund', 'Refund'
+    ADJUSTMENT = 'adjustment', 'Manual adjustment'
+    EXPIRY = 'expiry', 'Expiry'
+
+
+class AICreditTransaction(models.Model):
+    """Append-only ledger row. ``amount`` is signed tokens (positive grant,
+    negative debit); ``balance_after`` snapshots the account balance."""
+
+    account = models.ForeignKey(
+        AICreditAccount, on_delete=models.CASCADE, related_name='transactions'
+    )
+    kind = models.CharField(max_length=16, choices=CreditTxnKind.choices)
+    amount = models.BigIntegerField(help_text='Signed token delta: +grant, -debit.')
+    balance_after = models.BigIntegerField()
+    order = models.ForeignKey(
+        AICreditOrder, null=True, blank=True, on_delete=models.SET_NULL, related_name='transactions'
+    )
+    usage_log = models.ForeignKey(
+        'workflows.LLMUsageLog', null=True, blank=True, on_delete=models.SET_NULL, related_name='credit_transactions'
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='ai_credit_actions',
+    )
+    note = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['account', '-created_at'])]
+
+    def __str__(self):
+        return f'{self.get_kind_display()} {self.amount:+,} → {self.balance_after:,}'

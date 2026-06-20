@@ -245,13 +245,10 @@ class _AiResearcherScreenState extends ConsumerState<AiResearcherScreen> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => context.go(Routes.llmProviders),
-                        child: const Text(
-                          'Uses your default LLM provider. Configure one in Providers.',
-                          style: TextStyle(color: AppColors.muted, fontSize: 11),
-                        ),
+                    const Expanded(
+                      child: Text(
+                        'Uses the firm’s configured AI provider.',
+                        style: TextStyle(color: AppColors.muted, fontSize: 11),
                       ),
                     ),
                     const SizedBox(width: 8),

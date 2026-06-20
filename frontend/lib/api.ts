@@ -1030,27 +1030,6 @@ export interface WorkflowDetail extends WorkflowListItem {
   stages: WorkflowStageData[];
 }
 
-export interface LlmProviderConfig {
-  id: number;
-  provider: LlmProviderId;
-  provider_display: string;
-  label: string;
-  base_url: string;
-  default_model: string;
-  is_default: boolean;
-  has_api_key: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LlmProviderSupport {
-  value: LlmProviderId;
-  label: string;
-  default_model: string;
-  needs_api_key: boolean;
-  needs_base_url: boolean;
-}
-
 export const workflows = {
   templates() {
     return api<Paginated<WorkflowTemplate>>('/api/v1/workflow-templates/');
@@ -1121,30 +1100,6 @@ export const llmUsage = {
   /** Caller's own current-month usage — non-admin lawyers see this. */
   me() {
     return api<LlmUsageSummary>('/api/v1/llm-usage/me/');
-  },
-};
-
-export const llmProviders = {
-  list() {
-    return api<Paginated<LlmProviderConfig>>('/api/v1/llm-providers/');
-  },
-  supported() {
-    return api<LlmProviderSupport[]>('/api/v1/llm-providers/supported/');
-  },
-  create(payload: Partial<LlmProviderConfig> & { api_key?: string }) {
-    return api<LlmProviderConfig>('/api/v1/llm-providers/', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  },
-  update(id: number, payload: Partial<LlmProviderConfig> & { api_key?: string }) {
-    return api<LlmProviderConfig>(`/api/v1/llm-providers/${id}/`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
-  },
-  remove(id: number) {
-    return api<void>(`/api/v1/llm-providers/${id}/`, { method: 'DELETE' });
   },
 };
 

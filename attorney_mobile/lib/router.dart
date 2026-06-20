@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 
 import 'screens/admin/llm_usage_screen.dart';
 import 'screens/ai_workflows/ai_researcher_screen.dart';
-import 'screens/ai_workflows/providers_screen.dart';
 import 'screens/ai_workflows/templates_screen.dart';
 import 'screens/ai_workflows/workflow_detail_screen.dart';
 import 'screens/ai_workflows/workflows_screen.dart';
@@ -68,7 +67,6 @@ class Routes {
   static String workflow(int id) => '/ai-workflows/$id';
   static const aiResearcher = '/ai-workflows/ai-researcher';
   static const workflowTemplates = '/ai-workflows/templates';
-  static const llmProviders = '/ai-workflows/providers';
 
   static const adminLlmUsage = '/admin/llm-usage';
 }
@@ -183,7 +181,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: Routes.aiWorkflows, builder: (_, __) => const WorkflowsScreen()),
           GoRoute(path: Routes.aiResearcher, builder: (_, __) => const AiResearcherScreen()),
           GoRoute(path: Routes.workflowTemplates, builder: (_, __) => const WorkflowTemplatesScreen()),
-          GoRoute(path: Routes.llmProviders, builder: (_, __) => const LlmProvidersScreen()),
           GoRoute(
             path: '/ai-workflows/:id',
             builder: (_, s) => WorkflowDetailScreen(workflowId: int.parse(s.pathParameters['id']!)),

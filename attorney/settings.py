@@ -257,9 +257,13 @@ LLM_POOL_OPENAI_DEFAULT_MODEL = env.str('LLM_POOL_OPENAI_DEFAULT_MODEL', 'gpt-4o
 LLM_POOL_LOCAL_BASE_URL = env.str('LLM_POOL_LOCAL_BASE_URL', '')
 LLM_POOL_LOCAL_DEFAULT_MODEL = env.str('LLM_POOL_LOCAL_DEFAULT_MODEL', 'llama3.1')
 
-# Defaults applied to every lawyer using the pool. Per-user override lives in
-# the LLMUserQuota model — these are the platform safety net.
+# Defaults applied to every lawyer using the shared platform key. Per-user
+# overrides live in the LLMUserQuota model — these are the platform safety net.
+# Token windows stack: a call is blocked if it would breach the day, week, OR
+# month bucket (whichever trips first). Set any to 0 to disable that window.
 LLM_POOL_MONTHLY_TOKEN_QUOTA = env.int('LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000)
+LLM_POOL_WEEKLY_TOKEN_QUOTA = env.int('LLM_POOL_WEEKLY_TOKEN_QUOTA', 60_000)
+LLM_POOL_DAILY_TOKEN_QUOTA = env.int('LLM_POOL_DAILY_TOKEN_QUOTA', 20_000)
 LLM_POOL_RATE_LIMIT_PER_MINUTE = env.int('LLM_POOL_RATE_LIMIT_PER_MINUTE', 20)
 
 # Sentry — opt-in. If SENTRY_DSN is set and sentry-sdk is installed, errors

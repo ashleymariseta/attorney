@@ -1,3 +1,5 @@
+from collections import namedtuple
+
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -5,7 +7,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import credits
+from .credits import InsufficientCreditsError
 from .models import (
+    AIPlatformSettings,
     LLMProvider,
     LLMProviderConfig,
     LLMUsageLog,
@@ -16,9 +21,8 @@ from .models import (
     WorkflowStage,
     WorkflowTemplate,
 )
-from .providers import ProviderError, get_provider, list_supported, pool_config
+from .providers import ProviderError, get_provider, pool_config
 from .serializers import (
-    LLMProviderConfigSerializer,
     StageResultSerializer,
     WorkflowCreateSerializer,
     WorkflowDetailSerializer,
@@ -54,57 +58,88 @@ def _tenant_pseudo_id(user) -> str:
     return f'tenant_{h.hexdigest()[:24]}'
 
 
-def _user_quota(user) -> tuple[int, int, bool]:
-    """Return ``(monthly_tokens, rate_per_minute, pool_disabled)`` for the
-    user, falling back to platform settings when no override row exists."""
-    from django.conf import settings as dj_settings
+UserQuota = namedtuple('UserQuota', 'daily weekly monthly rate disabled')
 
+
+def _user_quota(user) -> 'UserQuota':
+    """Resolve the user's effective throttles: per-user override row if present,
+    otherwise the platform defaults from the AIPlatformSettings singleton (set
+    in Django admin). A ``0`` token quota means that window is unlimited."""
+    cfg = AIPlatformSettings.load()
     row = LLMUserQuota.objects.filter(owner=user).first()
-    monthly = getattr(dj_settings, 'LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000)
-    rate = getattr(dj_settings, 'LLM_POOL_RATE_LIMIT_PER_MINUTE', 20)
+    daily = cfg.daily_token_quota
+    weekly = cfg.weekly_token_quota
+    monthly = cfg.monthly_token_quota
+    rate = cfg.rate_limit_per_minute
     disabled = False
     if row:
+        if row.daily_token_quota is not None:
+            daily = row.daily_token_quota
+        if row.weekly_token_quota is not None:
+            weekly = row.weekly_token_quota
         if row.monthly_token_quota is not None:
             monthly = row.monthly_token_quota
         if row.rate_limit_per_minute is not None:
             rate = row.rate_limit_per_minute
         disabled = row.is_pool_disabled
-    return monthly, rate, disabled
+    return UserQuota(daily=daily, weekly=weekly, monthly=monthly, rate=rate, disabled=disabled)
+
+
+def _tokens_since(user, since) -> int:
+    """Total tokens (in + out) the user has spent on the shared key since
+    ``since``. Errored calls log 0 tokens so they don't count against quota."""
+    from django.db.models import Sum
+
+    agg = LLMUsageLog.objects.filter(
+        owner=user, pool=True, created_at__gte=since
+    ).aggregate(total=Sum('tokens_in') + Sum('tokens_out'))
+    return agg['total'] or 0
 
 
 def _enforce_pool_limits(user) -> None:
-    """Check rate + monthly quota *before* a pool-key call. Raises
-    :class:`QuotaError` with a clear message on breach.
+    """Check rate + day/week/month token quotas *before* a shared-key call.
+    Raises :class:`QuotaError` with a clear message on the first breach.
 
-    BYOK calls bypass this entirely — that's the lawyer's own bill."""
+    Windows stack: the tightest one that trips wins. A quota of 0 disables
+    that window."""
     from datetime import timedelta
-    from django.db.models import Sum
     from django.utils import timezone as tz
 
-    monthly, rate, disabled = _user_quota(user)
-    if disabled:
-        raise QuotaError('Your account is set to BYOK only — add an LLM provider in AI Workflows → Providers.')
+    q = _user_quota(user)
+    if q.disabled:
+        raise QuotaError('Your access to the AI provider has been disabled by an administrator.')
 
-    minute_ago = tz.now() - timedelta(minutes=1)
+    now = tz.now()
+    minute_ago = now - timedelta(minutes=1)
     recent = LLMUsageLog.objects.filter(owner=user, pool=True, created_at__gte=minute_ago).count()
-    if recent >= rate:
-        raise QuotaError(f'Rate limit reached ({rate}/min on the platform pool key). Try again in a moment.')
+    if q.rate and recent >= q.rate:
+        raise QuotaError(f'Rate limit reached ({q.rate}/min). Try again in a moment.')
 
-    month_start = tz.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    spent = LLMUsageLog.objects.filter(
-        owner=user, pool=True, created_at__gte=month_start
-    ).aggregate(total=Sum('tokens_in') + Sum('tokens_out'))['total'] or 0
-    if spent >= monthly:
-        raise QuotaError(
-            f'Monthly token quota exhausted ({monthly:,}). Add your own provider key to keep going.'
-        )
+    # Calendar-aligned windows: midnight today, Monday of this ISO week, 1st of month.
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = day_start - timedelta(days=now.weekday())
+    month_start = day_start.replace(day=1)
+
+    for label, period, quota, since in (
+        ('Daily', 'day', q.daily, day_start),
+        ('Weekly', 'week', q.weekly, week_start),
+        ('Monthly', 'month', q.monthly, month_start),
+    ):
+        if quota and _tokens_since(user, since) >= quota:
+            raise QuotaError(
+                f'{label} AI token quota reached ({quota:,}). It resets at the start of the next {period}.'
+            )
 
 
 def _log_usage(user, config, completion=None, error: str = '') -> None:
-    """Persist one LLMUsageLog row. Called after every provider call (pool
-    or BYOK) so the admin dashboard shows full attribution."""
-    is_pool = getattr(config, 'is_pool', False)
-    LLMUsageLog.objects.create(
+    """Persist one LLMUsageLog row after every provider call so the admin
+    dashboard shows full attribution and the quota windows have data to sum.
+
+    ``pool=True`` marks a call as served by the shared platform key (and thus
+    metered). With BYOK removed, every call is metered, so we default to True.
+    """
+    is_pool = getattr(config, 'is_pool', True)
+    return LLMUsageLog.objects.create(
         owner=user,
         provider=config.provider,
         model=(completion.model if completion else (getattr(config, 'default_model', '') or '')),
@@ -184,22 +219,24 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
         stage = self.get_object()
         system_prompt = request.data.get('system_prompt') or stage.purpose or ''
         user_prompt = request.data.get('user_prompt') or stage.prompt_template or ''
-        provider_id = request.data.get('provider_config_id')
 
-        config = _pick_provider_config(request.user, stage.provider, provider_id)
+        config = _pick_provider_config(stage.provider)
         if config is None:
             return Response(
-                {'detail': 'No matching provider configured. Add one in Providers settings.'},
+                {'detail': 'No AI provider has been configured by the administrator yet.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Pool-key calls go through rate-limit + monthly quota guards. BYOK
-        # calls run on the lawyer's own bill so we let them through.
-        if getattr(config, 'is_pool', False):
-            try:
-                _enforce_pool_limits(request.user)
-            except QuotaError as q:
-                return Response({'detail': str(q)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        # Credits are the hard gate (must have a positive balance to start);
+        # the per-minute rate and day/week/month token quotas throttle on top.
+        try:
+            credits.assert_can_spend(request.user)
+        except InsufficientCreditsError as c:
+            return Response({'detail': str(c)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+        try:
+            _enforce_pool_limits(request.user)
+        except QuotaError as q:
+            return Response({'detail': str(q)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         adapter = get_provider(config)
         model = request.data.get('model') or stage.model or config.default_model
@@ -222,7 +259,8 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        _log_usage(request.user, config, completion=completion)
+        usage = _log_usage(request.user, config, completion=completion)
+        credits.charge_usage(request.user, completion, usage_log=usage, note=f'Stage run: {stage.title}'[:240])
         result = StageResult.objects.create(
             stage=stage,
             provider=config.provider,
@@ -238,26 +276,36 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
         return Response(StageResultSerializer(result).data, status=status.HTTP_201_CREATED)
 
 
-def _pick_provider_config(user, provider, explicit_id):
-    """Find the provider config to use for a given stage call.
+def _pick_provider_config(provider=None):
+    """Resolve the single platform-wide provider config.
 
-    Priority: explicit ``provider_config_id`` from the request → user's
-    default config for the stage's provider → first config for that
-    provider → platform pool key (synthesized from settings) → ``None``.
-
-    The returned object always carries ``provider``, ``api_key``,
-    ``base_url``, ``default_model`` and an ``is_pool`` flag.
+    Providers are no longer configured per-lawyer. An administrator sets one
+    up in the Django admin and every lawyer's AI run uses it. When ``provider``
+    is given (a workflow stage declares one) we prefer a config for it, but
+    always fall back to the global default so a stage never fails just because
+    it named a provider the admin didn't configure. Order within each scope:
+    ``is_default`` first, then most recently updated. Finally the settings
+    pool key. Returns ``None`` only when nothing at all is configured.
     """
-    qs = LLMProviderConfig.objects.filter(owner=user)
-    if explicit_id:
-        return qs.filter(id=explicit_id).first()
-    user_cfg = (
-        qs.filter(provider=provider, is_default=True).first()
-        or qs.filter(provider=provider).first()
-    )
-    if user_cfg is not None:
-        return user_cfg
-    return pool_config(provider)
+    qs = LLMProviderConfig.objects.all()
+    cfg = None
+    if provider:
+        cfg = (
+            qs.filter(provider=provider, is_default=True).order_by('-updated_at').first()
+            or qs.filter(provider=provider).order_by('-updated_at').first()
+        )
+    if cfg is None:
+        cfg = (
+            qs.filter(is_default=True).order_by('-updated_at').first()
+            or qs.order_by('-updated_at').first()
+        )
+    if cfg is not None:
+        return cfg
+    for p in ([provider] if provider else []) + ['anthropic', 'openai', 'local']:
+        pool = pool_config(p)
+        if pool is not None:
+            return pool
+    return None
 
 
 def _is_platform_admin(user) -> bool:
@@ -329,26 +377,32 @@ def _usage_summary(scope_user) -> dict:
         u = user_map.get(uid)
         if u is None:
             continue
-        monthly, rate, disabled = _user_quota(u)
+        q = _user_quota(u)
         out.append({
             **r,
             'email': u.email,
             'full_name': u.get_full_name() or u.email,
             'role': getattr(u, 'role', ''),
-            'monthly_quota': monthly,
-            'rate_limit_per_minute': rate,
-            'pool_disabled': disabled,
+            'daily_quota': q.daily,
+            'weekly_quota': q.weekly,
+            'monthly_quota': q.monthly,
+            'rate_limit_per_minute': q.rate,
+            'pool_disabled': q.disabled,
+            'credit_balance': credits.balance_for(u),
             'last_used': r['last_used'].isoformat() if r['last_used'] else None,
         })
     out.sort(key=lambda x: x['pool_tokens'] + x['byok_tokens'], reverse=True)
 
     # Defaults so the admin UI can show "X using Y / Z monthly".
     from django.conf import settings as dj_settings
+    cfg = AIPlatformSettings.load()
     return {
         'month_start': month_start.isoformat(),
         'defaults': {
-            'monthly_quota': getattr(dj_settings, 'LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000),
-            'rate_limit_per_minute': getattr(dj_settings, 'LLM_POOL_RATE_LIMIT_PER_MINUTE', 20),
+            'daily_quota': cfg.daily_token_quota,
+            'weekly_quota': cfg.weekly_token_quota,
+            'monthly_quota': cfg.monthly_token_quota,
+            'rate_limit_per_minute': cfg.rate_limit_per_minute,
         },
         'pool_configured': {
             'anthropic': bool(getattr(dj_settings, 'LLM_POOL_ANTHROPIC_API_KEY', '')),
@@ -359,32 +413,3 @@ def _usage_summary(scope_user) -> dict:
     }
 
 
-class LLMProviderConfigViewSet(viewsets.ModelViewSet):
-    serializer_class = LLMProviderConfigSerializer
-    permission_classes = [IsAuthenticated]
-    queryset = LLMProviderConfig.objects.none()
-
-    def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return LLMProviderConfig.objects.none()
-        return LLMProviderConfig.objects.filter(owner=self.request.user)
-
-    def perform_create(self, serializer):
-        cfg = serializer.save(owner=self.request.user)
-        if cfg.is_default:
-            # Only one default per provider per user.
-            LLMProviderConfig.objects.filter(
-                owner=self.request.user, provider=cfg.provider
-            ).exclude(id=cfg.id).update(is_default=False)
-
-    def perform_update(self, serializer):
-        cfg = serializer.save()
-        if cfg.is_default:
-            LLMProviderConfig.objects.filter(
-                owner=self.request.user, provider=cfg.provider
-            ).exclude(id=cfg.id).update(is_default=False)
-
-    @action(detail=False, methods=['get'])
-    def supported(self, request):
-        """Static description of every adapter — drives the settings UI."""
-        return Response(list_supported())

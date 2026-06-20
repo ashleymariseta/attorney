@@ -5,12 +5,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from workflows.models import LLMProviderConfig
-from workflows.providers import ProviderError, get_provider, pool_config
+from workflows import credits
+from workflows.credits import InsufficientCreditsError
+from workflows.providers import ProviderError, get_provider
 from workflows.views import (
     QuotaError,
     _enforce_pool_limits,
     _log_usage,
+    _pick_provider_config,
     _tenant_pseudo_id,
 )
 
@@ -36,22 +38,6 @@ def _is_lawyer(user):
     return getattr(user, 'role', None) == 'lawyer'
 
 
-def _pick_provider_config(user):
-    """Co-researcher uses the user's default provider config — any
-    provider, ordered Anthropic → OpenAI → Local — so the lawyer doesn't
-    have to pick a model on every ask. Falls back to the platform pool
-    key (Anthropic > OpenAI > Local) when nothing is on file."""
-    qs = LLMProviderConfig.objects.filter(owner=user)
-    cfg = qs.filter(is_default=True).first() or qs.order_by('provider').first()
-    if cfg is not None:
-        return cfg
-    for provider in ('anthropic', 'openai', 'local'):
-        pool = pool_config(provider)
-        if pool is not None:
-            return pool
-    return None
-
-
 class CoResearcherAskView(APIView):
     """``POST /co-researcher/ask/`` — main RAG entrypoint.
 
@@ -74,10 +60,10 @@ class CoResearcherAskView(APIView):
         data = ser.validated_data
 
         retrieved = retrieve(data['question'], scopes=data.get('scope'))
-        config = _pick_provider_config(request.user)
+        config = _pick_provider_config()
         if config is None:
             return Response(
-                {'detail': 'Add an LLM provider in AI Workflows → Providers first.'},
+                {'detail': 'No AI provider has been configured by the administrator yet.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -108,13 +94,19 @@ class CoResearcherAskView(APIView):
             for rank, r in enumerate(retrieved):
                 ResearchCitation.objects.create(query=q, chunk=r.chunk, rank=rank, score=r.score)
 
-        if getattr(config, 'is_pool', False):
-            try:
-                _enforce_pool_limits(request.user)
-            except QuotaError as q_err:
-                q.error = str(q_err)
-                q.save(update_fields=['error'])
-                return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        # Credits gate (hard), then per-minute rate + day/week/month throttles.
+        try:
+            credits.assert_can_spend(request.user)
+        except InsufficientCreditsError as c_err:
+            q.error = str(c_err)
+            q.save(update_fields=['error'])
+            return Response({'detail': str(c_err)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+        try:
+            _enforce_pool_limits(request.user)
+        except QuotaError as q_err:
+            q.error = str(q_err)
+            q.save(update_fields=['error'])
+            return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         try:
             completion = adapter.complete(
@@ -132,7 +124,8 @@ class CoResearcherAskView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        _log_usage(request.user, config, completion=completion)
+        usage = _log_usage(request.user, config, completion=completion)
+        credits.charge_usage(request.user, completion, usage_log=usage, note='AI-Researcher ask')
         q.answer_text = completion.text
         q.model = completion.model or q.model
         q.tokens_in = completion.tokens_in
