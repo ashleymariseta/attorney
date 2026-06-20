@@ -478,7 +478,6 @@ function AIWorkflowsGroup({
           {subNavItem('/ai-workflows', 'My Workflows', <Sparkles size={13} />)}
           {subNavItem('/ai-workflows/ai-researcher', 'AI-Researcher', <BookText size={13} />)}
           {subNavItem('/ai-workflows/templates', 'Templates', <FileText size={13} />)}
-          {subNavItem('/ai-workflows/providers', 'Providers', <KeyRound size={13} />)}
         </div>
       )}
     </div>

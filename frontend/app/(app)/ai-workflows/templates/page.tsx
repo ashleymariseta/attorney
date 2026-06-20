@@ -50,7 +50,7 @@ export default function WorkflowTemplatesPage() {
       </Link>
       <h1 className="mt-3 text-2xl font-bold">Templates</h1>
       <p className="mt-1 text-sm text-muted">
-        Each template defines an ordered set of stages with sensible default providers — all overridable per stage.
+        Each template defines an ordered set of stages with sensible defaults — edit each stage&rsquo;s prompt before you run it.
       </p>
 
       {loading ? (

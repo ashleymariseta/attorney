@@ -146,8 +146,7 @@ export default function CoResearcherPage() {
 
         <div className="mt-4 flex items-center justify-between">
           <p className="text-[11px] text-muted">
-            Uses your default LLM provider. Configure one in{' '}
-            <Link href="/ai-workflows/providers" className="font-semibold text-brand-dark hover:underline">Providers</Link>.
+            Uses the platform&rsquo;s configured AI provider. Draws from your AI credit balance.
           </p>
           <button
             type="submit"
