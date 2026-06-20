@@ -100,7 +100,15 @@ class ResearchCitation(models.Model):
     Order matters — rank 0 is the highest-scored chunk."""
 
     query = models.ForeignKey(ResearchQuery, on_delete=models.CASCADE, related_name='citations')
-    chunk = models.ForeignKey(CorpusChunk, on_delete=models.CASCADE, related_name='+')
+    # Null for semantic (vector) hits, which aren't backed by a CorpusChunk row.
+    chunk = models.ForeignKey(
+        CorpusChunk, on_delete=models.CASCADE, related_name='+', null=True, blank=True
+    )
+    # Snapshot of the cited authority — always populated, so the audit trail and
+    # source pills work for both keyword and vector retrieval.
+    source_title = models.CharField(max_length=400, blank=True)
+    source_kind = models.CharField(max_length=80, blank=True)
+    snippet = models.TextField(blank=True)
     rank = models.PositiveIntegerField()
     score = models.FloatField(default=0.0)
 

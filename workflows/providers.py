@@ -14,10 +14,29 @@ from __future__ import annotations
 
 import abc
 import json
+import ssl
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Verified TLS context backed by certifi's CA bundle when available.
+
+    python.org builds on macOS often ship without a usable system CA store,
+    which makes outbound HTTPS to providers fail with CERTIFICATE_VERIFY_FAILED.
+    Using certifi avoids that without disabling verification.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+_SSL_CONTEXT = _ssl_context()
 
 from .models import LLMProvider, LLMProviderConfig
 
@@ -74,7 +93,7 @@ class BaseLLMProvider(abc.ABC):
             req.add_header(k, v)
         req.add_header('Content-Type', 'application/json')
         try:
-            with urlrequest.urlopen(req, timeout=timeout) as resp:
+            with urlrequest.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp:
                 return json.loads(resp.read().decode('utf-8'))
         except urlerror.HTTPError as e:
             detail = e.read().decode('utf-8', errors='replace') if e.fp else str(e)

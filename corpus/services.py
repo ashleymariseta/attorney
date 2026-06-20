@@ -43,6 +43,36 @@ class RetrievedChunk:
     score: float
 
 
+@dataclass
+class Authority:
+    """A single grounding source for the prompt — produced by either keyword
+    retrieval (``chunk`` set) or semantic vector retrieval (``chunk`` None,
+    snapshot fields carry the data)."""
+
+    title: str
+    kind_display: str
+    citation: str
+    text: str
+    score: float = 0.0
+    chunk: CorpusChunk | None = None
+
+
+def keyword_authorities(retrieved: list['RetrievedChunk']) -> list['Authority']:
+    """Adapt keyword :class:`RetrievedChunk` results to :class:`Authority`."""
+    out: list[Authority] = []
+    for r in retrieved:
+        doc = r.chunk.document
+        out.append(Authority(
+            title=doc.title,
+            kind_display=doc.collection.get_kind_display(),
+            citation=doc.citation or '',
+            text=r.chunk.text,
+            score=r.score,
+            chunk=r.chunk,
+        ))
+    return out
+
+
 def chunk_text(body: str, target_size: int = 1200) -> list[str]:
     """Split ``body`` into ~``target_size``-char chunks at paragraph
     boundaries. Falls back to length-splitting for one giant paragraph."""
@@ -119,12 +149,17 @@ def retrieve(
     return out[:k]
 
 
-def build_research_prompt(question: str, retrieved: list[RetrievedChunk]) -> tuple[str, str]:
+def build_research_prompt(
+    question: str,
+    authorities: list['Authority'],
+    max_chars_per_authority: int = 900,
+) -> tuple[str, str]:
     """Compose the system + user prompt for the Co-researcher LLM call.
 
-    Returns ``(system, user)``. The system prompt locks the model into
-    citing only the supplied chunks; the user prompt embeds them with
-    stable ``[#n]`` markers the frontend renders as source pills.
+    Returns ``(system, user)``. The system prompt locks the model into citing
+    only the supplied authorities; the user prompt embeds them with stable
+    ``[#n]`` markers the frontend renders as source pills. Each authority's
+    text is truncated to keep token usage in check.
     """
     system = (
         "You are a legal research assistant for Zimbabwean practice. "
@@ -135,12 +170,14 @@ def build_research_prompt(question: str, retrieved: list[RetrievedChunk]) -> tup
     )
 
     parts = [f'QUESTION:\n{question}\n\nAUTHORITIES:']
-    for i, r in enumerate(retrieved, start=1):
-        doc = r.chunk.document
-        header = f'[#{i}] {doc.collection.get_kind_display()} — {doc.title}'
-        if doc.citation:
-            header += f' ({doc.citation})'
-        parts.append(f'{header}\n{r.chunk.text.strip()}')
+    for i, a in enumerate(authorities, start=1):
+        header = f'[#{i}] {a.kind_display} — {a.title}'
+        if a.citation:
+            header += f' ({a.citation})'
+        text = (a.text or '').strip()
+        if len(text) > max_chars_per_authority:
+            text = text[:max_chars_per_authority].rstrip() + '…'
+        parts.append(f'{header}\n{text}')
     parts.append(
         '\nAnswer in 2–6 short paragraphs. Cite every legal proposition with '
         'the [#n] markers above.'

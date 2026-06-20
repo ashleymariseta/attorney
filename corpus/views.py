@@ -22,7 +22,8 @@ from .serializers import (
     CorpusCollectionSerializer,
     ResearchQuerySerializer,
 )
-from .services import build_research_prompt, retrieve
+from .services import build_research_prompt, keyword_authorities, retrieve
+from .vector import vector_retrieve
 
 
 class CorpusCollectionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -59,7 +60,13 @@ class CoResearcherAskView(APIView):
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
 
-        retrieved = retrieve(data['question'], scopes=data.get('scope'))
+        # Semantic vector search first (grounded in the legal corpus); fall back
+        # to keyword retrieval if the vector index is unavailable or empty.
+        authorities = vector_retrieve(data['question'], scopes=data.get('scope'), k=5)
+        if not authorities:
+            authorities = keyword_authorities(
+                retrieve(data['question'], scopes=data.get('scope'), k=8)
+            )
         config = _pick_provider_config()
         if config is None:
             return Response(
@@ -67,7 +74,7 @@ class CoResearcherAskView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not retrieved:
+        if not authorities:
             with transaction.atomic():
                 q = ResearchQuery.objects.create(
                     owner=request.user,
@@ -79,7 +86,7 @@ class CoResearcherAskView(APIView):
                 )
             return Response(ResearchQuerySerializer(q).data)
 
-        system, user_prompt = build_research_prompt(data['question'], retrieved)
+        system, user_prompt = build_research_prompt(data['question'], authorities)
         adapter = get_provider(config)
         model = data.get('model') or config.default_model
 
@@ -91,8 +98,12 @@ class CoResearcherAskView(APIView):
                 provider=config.provider,
                 model=model or '',
             )
-            for rank, r in enumerate(retrieved):
-                ResearchCitation.objects.create(query=q, chunk=r.chunk, rank=rank, score=r.score)
+            for rank, a in enumerate(authorities):
+                ResearchCitation.objects.create(
+                    query=q, chunk=a.chunk, rank=rank, score=a.score,
+                    source_title=a.title[:400], source_kind=a.kind_display[:80],
+                    snippet=(a.text or '')[:1000],
+                )
 
         # Credits gate (hard), then per-minute rate + day/week/month throttles.
         try:

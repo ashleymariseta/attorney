@@ -26,3 +26,7 @@ node_modules/
 
 # Claude Code local session state
 .claude/
+
+# Large local RAG data (do not commit)
+attorney/rag/chroma_db/
+attorney/rag/data/

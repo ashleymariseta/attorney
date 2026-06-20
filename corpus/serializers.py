@@ -33,15 +33,32 @@ class CorpusDocumentMiniSerializer(serializers.ModelSerializer):
 
 
 class CitationOutSerializer(serializers.ModelSerializer):
-    document = CorpusDocumentMiniSerializer(source='chunk.document', read_only=True)
+    document = serializers.SerializerMethodField()
     excerpt = serializers.SerializerMethodField()
 
     class Meta:
         model = ResearchCitation
         fields = ['id', 'rank', 'score', 'document', 'excerpt']
 
+    def get_document(self, obj):
+        # Keyword hits are backed by a CorpusChunk/Document; semantic (vector)
+        # hits carry a snapshot instead. Present a uniform shape either way.
+        if obj.chunk_id and obj.chunk and obj.chunk.document_id:
+            return CorpusDocumentMiniSerializer(obj.chunk.document).data
+        return {
+            'id': None,
+            'title': obj.source_title,
+            'citation': '',
+            'jurisdiction': '',
+            'year': None,
+            'source_url': '',
+            'kind': '',
+            'kind_display': obj.source_kind,
+            'collection_name': obj.source_kind,
+        }
+
     def get_excerpt(self, obj):
-        text = obj.chunk.text or ''
+        text = (obj.chunk.text if (obj.chunk_id and obj.chunk) else obj.snippet) or ''
         return text[:600] + ('…' if len(text) > 600 else '')
 
 
