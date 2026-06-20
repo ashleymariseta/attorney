@@ -266,11 +266,6 @@ LLM_POOL_LOCAL_DEFAULT_MODEL = env.str('LLM_POOL_LOCAL_DEFAULT_MODEL', 'llama3.1
 # overrides live in the LLMUserQuota model — these are the platform safety net.
 # Token windows stack: a call is blocked if it would breach the day, week, OR
 # month bucket (whichever trips first). Set any to 0 to disable that window.
-# Legal RAG vector index (Chroma) — semantic grounding for the Co-researcher.
-# Falls back to keyword search if chromadb or the index is unavailable.
-LEGAL_CHROMA_PATH = env.str('LEGAL_CHROMA_PATH', str(BASE_DIR / 'attorney' / 'rag' / 'chroma_db'))
-LEGAL_CHROMA_COLLECTION = env.str('LEGAL_CHROMA_COLLECTION', 'zimbabwe_legal')
-
 LLM_POOL_MONTHLY_TOKEN_QUOTA = env.int('LLM_POOL_MONTHLY_TOKEN_QUOTA', 200_000)
 LLM_POOL_WEEKLY_TOKEN_QUOTA = env.int('LLM_POOL_WEEKLY_TOKEN_QUOTA', 60_000)
 LLM_POOL_DAILY_TOKEN_QUOTA = env.int('LLM_POOL_DAILY_TOKEN_QUOTA', 20_000)

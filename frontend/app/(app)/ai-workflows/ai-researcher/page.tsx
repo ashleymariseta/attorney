@@ -2,24 +2,10 @@
 
 import Link from 'next/link';
 import {
-  ArrowLeft,
-  BookText,
-  ExternalLink,
-  History,
-  Loader2,
-  Send,
-  ShieldCheck,
-  Sparkles,
+  ArrowLeft, BookText, Loader2, Plus, Send, ShieldCheck, Sparkles, User as UserIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  coResearcher,
-  ApiError,
-  type CorpusCollectionItem,
-  type CorpusKind,
-  type ResearchQueryData,
-} from '@/lib/api';
-import { SkeletonCard } from '@/components/Skeleton';
+import { useEffect, useRef, useState } from 'react';
+import { coResearcher, ApiError, type CorpusKind } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import Markdown from '@/components/Markdown';
 
@@ -32,281 +18,207 @@ const KIND_LABEL: Record<CorpusKind, string> = {
   statute: 'Statutes',
 };
 
+const EXAMPLES = [
+  'What are the grounds for divorce under Zimbabwean law?',
+  'Explain the requirements for a spoliation order.',
+  'What is the procedure for registering a customary marriage?',
+];
+
+interface Msg {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  streaming?: boolean;
+}
+
 export default function CoResearcherPage() {
   const toast = useToast();
-  const [collections, setCollections] = useState<CorpusCollectionItem[]>([]);
-  const [history, setHistory] = useState<ResearchQueryData[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const [question, setQuestion] = useState('');
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [scope, setScope] = useState<CorpusKind[]>([]);
+  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [current, setCurrent] = useState<ResearchQueryData | null>(null);
-  const [streamText, setStreamText] = useState('');
-  const answerRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(0);
+  const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [c, h] = await Promise.all([coResearcher.collections(), coResearcher.history()]);
-        setCollections(c.results);
-        setHistory(h.results);
-      } catch {}
-      setLoading(false);
-    })();
-  }, []);
-
-  const kindsWithCorpus = useMemo(() => {
-    const set = new Set(collections.map((c) => c.kind));
-    return KIND_ORDER.filter((k) => set.has(k));
-  }, [collections]);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   function toggleScope(k: CorpusKind) {
     setScope((cur) => (cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]));
   }
 
-  async function ask(e: React.FormEvent) {
-    e.preventDefault();
-    if (!question.trim()) return;
+  function newChat() {
+    setMessages([]);
+    setInput('');
+  }
+
+  async function send(text: string) {
+    const question = text.trim();
+    if (!question || busy) return;
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
+    const userMsg: Msg = { id: ++idRef.current, role: 'user', content: question };
+    const assistant: Msg = { id: ++idRef.current, role: 'assistant', content: '', streaming: true };
+    setMessages((m) => [...m, userMsg, assistant]);
+    setInput('');
     setBusy(true);
-    setCurrent(null);
-    setStreamText('');
-    setTimeout(() => answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+
+    const setAssistant = (fn: (prev: string) => string) =>
+      setMessages((m) => m.map((x) => (x.id === assistant.id ? { ...x, content: fn(x.content) } : x)));
+
     try {
       await coResearcher.askStream(
-        { question: question.trim(), scope },
+        { question, scope, history },
         {
-          onDelta: (t) => setStreamText((prev) => prev + t),
+          onDelta: (t) => setAssistant((prev) => prev + t),
           onDone: (q) => {
-            setCurrent(q);
-            setStreamText('');
-            setHistory((prev) => [q, ...prev]);
+            setMessages((m) =>
+              m.map((x) => (x.id === assistant.id ? { ...x, content: q.answer_text || x.content, streaming: false } : x)),
+            );
           },
-          onError: (detail) => toast.error(detail),
+          onError: (detail) => {
+            toast.error(detail);
+            setMessages((m) => m.filter((x) => x.id !== assistant.id && x.id !== userMsg.id));
+            setInput(question);
+          },
         },
       );
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'AI-Researcher request failed.');
+      setMessages((m) => m.map((x) => (x.id === assistant.id ? { ...x, streaming: false } : x)));
     } finally {
       setBusy(false);
+      setMessages((m) => m.map((x) => (x.streaming ? { ...x, streaming: false } : x)));
     }
   }
 
+  const empty = messages.length === 0;
+
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      <Link
-        href="/ai-workflows"
-        className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-dark hover:underline"
-      >
-        <ArrowLeft size={12} /> Workflows
-      </Link>
-      <div className="mt-3 flex items-start gap-3">
-        <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-dark text-white">
-          <BookText size={20} />
-        </span>
-        <div>
-          <h1 className="text-2xl font-bold">AI-Researcher</h1>
-          <p className="mt-1 text-sm text-muted">
-            Ask the grounded legal corpus. Every answer cites the chunks supplied to the model — anything not in the corpus is flagged as such.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-6 flex items-start gap-3 rounded-2xl border border-brand-light/30 bg-brand-light/10 p-4 text-sm">
-        <ShieldCheck size={18} className="mt-0.5 shrink-0 text-brand-dark" />
-        <p className="text-brand-dark/90">
-          Answers are drawn from the supplied authorities below — never from the model&rsquo;s memory.
-          Verify every citation before relying on it.
-        </p>
-      </div>
-
-      <form onSubmit={ask} className="mt-6 rounded-2xl border border-line bg-white p-4 shadow-sm">
-        <label className="label">Your question</label>
-        <textarea
-          className="field"
-          rows={3}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="e.g. What are the requirements for the mandament van spolie under Zimbabwean law?"
-          required
-        />
-
-        <div className="mt-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Scope</p>
-          {loading ? (
-            <div className="flex gap-2">
-              <SkeletonCard className="h-8 w-24" />
-              <SkeletonCard className="h-8 w-24" />
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <Chip active={scope.length === 0} onClick={() => setScope([])}>All sources</Chip>
-              {kindsWithCorpus.map((k) => (
-                <Chip key={k} active={scope.includes(k)} onClick={() => toggleScope(k)}>
-                  {KIND_LABEL[k]}
-                </Chip>
-              ))}
-              {kindsWithCorpus.length === 0 && (
-                <p className="text-xs text-muted">No corpus seeded yet — run <code className="font-mono">manage.py seed_corpus</code>.</p>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-[11px] text-muted">
-            Uses the platform&rsquo;s configured AI provider. Draws from your AI credit balance.
-          </p>
-          <button
-            type="submit"
-            disabled={busy || !question.trim()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand disabled:opacity-50"
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            {busy ? 'Researching…' : 'Ask'}
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-3xl flex-col px-4 py-6 sm:px-6">
+      <div className="flex items-center justify-between">
+        <Link href="/ai-workflows" className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-dark hover:underline">
+          <ArrowLeft size={12} /> Workflows
+        </Link>
+        {!empty && (
+          <button onClick={newChat} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand">
+            <Plus size={13} /> New chat
           </button>
-        </div>
-      </form>
+        )}
+      </div>
 
-      {busy && !current && (
-        <div ref={answerRef} className="mt-8">
-          <div className="rounded-2xl border border-brand-light/30 bg-gradient-to-br from-brand-light/10 via-white to-white p-5 shadow-sm">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-dark">
-              <Sparkles size={11} /> Answer
-              <Loader2 size={11} className="animate-spin text-muted" />
-            </div>
-            {streamText ? (
-              <div className="mt-2"><Markdown>{streamText}</Markdown></div>
-            ) : (
-              <p className="mt-2 text-sm text-muted">Searching the corpus and drafting…</p>
-            )}
+      {empty ? (
+        <div className="flex flex-1 flex-col items-center justify-center text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-dark text-white">
+            <BookText size={22} />
+          </span>
+          <h1 className="mt-4 text-2xl font-bold">AI-Researcher</h1>
+          <p className="mt-1 max-w-md text-sm text-muted">
+            Ask anything about Zimbabwean law. Set a scope to steer the answer toward specific sources.
+          </p>
+          <div className="mt-6 grid w-full max-w-xl gap-2 sm:grid-cols-3">
+            {EXAMPLES.map((ex) => (
+              <button key={ex} onClick={() => send(ex)} className="rounded-xl border border-line bg-white p-3 text-left text-xs text-ink/80 transition hover:border-brand hover:shadow-sm">
+                {ex}
+              </button>
+            ))}
           </div>
         </div>
-      )}
-
-      {current && (
-        <div ref={answerRef} className="mt-8 space-y-4">
-          <AnswerPanel q={current} />
-          {current.citations.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Authorities supplied to the model</p>
-              <ul className="space-y-2">
-                {current.citations.map((c) => (
-                  <li key={c.id} className="rounded-xl border border-line bg-white p-3">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full bg-brand-light/30 px-2 py-0.5 font-semibold text-brand-dark">[#{c.rank + 1}]</span>
-                      <span className="rounded-full bg-canvas px-2 py-0.5 font-semibold uppercase tracking-wide text-muted">
-                        {c.document.kind_display}
-                      </span>
-                      <span className="truncate font-semibold text-ink">{c.document.title}</span>
-                      {c.document.year && <span className="text-muted">· {c.document.year}</span>}
-                      {c.document.source_url && (
-                        <a href={c.document.source_url} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-brand hover:underline">
-                          <ExternalLink size={11} /> Source
-                        </a>
-                      )}
-                    </div>
-                    {c.document.citation && <p className="mt-1 text-xs text-muted">{c.document.citation}</p>}
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-ink/85">{c.excerpt}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      {history.length > 0 && (
-        <div className="mt-10">
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-            <History size={12} /> Recent
-          </p>
-          <ul className="space-y-2">
-            {history.slice(0, 6).map((h) => (
-              <li key={h.id}>
-                <button
-                  onClick={() => {
-                    setCurrent(h);
-                    setQuestion(h.question);
-                    setScope(h.scope ?? []);
-                    setTimeout(() => answerRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-                  }}
-                  className="block w-full rounded-xl border border-line bg-white p-3 text-left transition hover:border-brand hover:shadow-sm"
-                >
-                  <p className="line-clamp-2 text-sm font-semibold text-ink">{h.question}</p>
-                  <p className="mt-1 text-[11px] text-muted">
-                    {new Date(h.created_at).toLocaleString()} · {h.citations.length} citation{h.citations.length === 1 ? '' : 's'} · {h.provider || '—'}
-                  </p>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AnswerPanel({ q }: { q: ResearchQueryData }) {
-  return (
-    <div className="rounded-2xl border border-brand-light/30 bg-gradient-to-br from-brand-light/10 via-white to-white p-5 shadow-sm">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-dark">
-        <Sparkles size={11} /> Answer
-        {q.provider && <span className="text-muted">· {q.provider}{q.model && ` · ${q.model}`}</span>}
-      </div>
-      {q.error ? (
-        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{q.error}</p>
       ) : (
-        <AnswerWithPills text={q.answer_text || '—'} />
+        <div className="flex-1 space-y-5 py-6">
+          {messages.map((m) => (
+            <MessageBubble key={m.id} msg={m} />
+          ))}
+          <div ref={endRef} />
+        </div>
       )}
-      {(q.tokens_in > 0 || q.tokens_out > 0) && (
-        <p className="mt-3 text-[11px] text-muted">
-          {q.tokens_in} in / {q.tokens_out} out tokens
+
+      {/* Composer */}
+      <div className="sticky bottom-0 mt-2 bg-canvas/80 pb-2 pt-2 backdrop-blur">
+        <ScopeBar scope={scope} onToggle={toggleScope} onClear={() => setScope([])} />
+        <form
+          onSubmit={(e) => { e.preventDefault(); send(input); }}
+          className="mt-2 flex items-end gap-2 rounded-2xl border border-line bg-white p-2 shadow-sm focus-within:border-brand"
+        >
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); }
+            }}
+            rows={1}
+            placeholder="Ask a legal question…"
+            className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
+          />
+          <button
+            type="submit"
+            disabled={busy || !input.trim()}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-dark text-white transition hover:bg-brand disabled:opacity-40"
+          >
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          </button>
+        </form>
+        <p className="mt-1.5 flex items-center justify-center gap-1 text-[11px] text-muted">
+          <ShieldCheck size={11} /> AI can be wrong — verify citations against the primary source.
         </p>
-      )}
+      </div>
     </div>
   );
 }
 
-function AnswerWithPills({ text }: { text: string }) {
-  // Render the [#n] markers the prompt asks the model to emit as inline pills.
-  const parts = text.split(/(\[#\d+\])/g);
+function MessageBubble({ msg }: { msg: Msg }) {
+  if (msg.role === 'user') {
+    return (
+      <div className="flex justify-end gap-2">
+        <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-brand-dark px-4 py-2.5 text-sm text-white">
+          {msg.content}
+        </div>
+        <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-light/40 text-brand-dark">
+          <UserIcon size={14} />
+        </span>
+      </div>
+    );
+  }
   return (
-    <p className="mt-2 whitespace-pre-wrap text-sm text-ink/90">
-      {parts.map((p, i) =>
-        /^\[#\d+\]$/.test(p) ? (
-          <span
-            key={i}
-            className="mx-0.5 inline-flex items-center gap-0.5 rounded-full bg-brand-dark/10 px-1.5 py-0.5 text-[10px] font-semibold text-brand-dark"
-          >
-            {p}
-          </span>
+    <div className="flex gap-2">
+      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-dark text-white">
+        <Sparkles size={14} />
+      </span>
+      <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-line bg-white px-4 py-2.5 shadow-sm">
+        {msg.content ? (
+          <Markdown>{msg.content}</Markdown>
         ) : (
-          <span key={i}>{p}</span>
-        )
-      )}
-    </p>
+          <span className="inline-flex items-center gap-1.5 text-sm text-muted">
+            <Loader2 size={13} className="animate-spin" /> Thinking…
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function ScopeBar({ scope, onToggle, onClear }: { scope: CorpusKind[]; onToggle: (k: CorpusKind) => void; onClear: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-        active ? 'border-brand-dark bg-brand-dark text-white' : 'border-line text-muted hover:border-brand'
-      }`}
-    >
-      {children}
-    </button>
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Scope</span>
+      <button
+        onClick={onClear}
+        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${scope.length === 0 ? 'bg-brand-dark text-white' : 'border border-line bg-white text-muted hover:border-brand'}`}
+      >
+        All sources
+      </button>
+      {KIND_ORDER.map((k) => {
+        const on = scope.includes(k);
+        return (
+          <button
+            key={k}
+            onClick={() => onToggle(k)}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${on ? 'bg-brand-dark text-white' : 'border border-line bg-white text-muted hover:border-brand'}`}
+          >
+            {KIND_LABEL[k]}
+          </button>
+        );
+      })}
+    </div>
   );
 }

@@ -84,7 +84,7 @@ class BaseLLMProvider(abc.ABC):
         be attributed without sending PII upstream.
         """
 
-    def stream(self, *, system, user, model=None, user_id=None):
+    def stream(self, *, system, user=None, model=None, user_id=None, messages=None):
         """Yield incremental output as dicts:
             {'type': 'delta', 'text': '...'}            (zero or more)
             {'type': 'done', 'text': full, 'model': m,
@@ -93,7 +93,7 @@ class BaseLLMProvider(abc.ABC):
         Default implementation has no real streaming — it runs ``complete``
         and emits a single delta + done. Providers that support SSE override
         this (see :class:`ClaudeProvider`)."""
-        c = self.complete(system=system, user=user, model=model, user_id=user_id)
+        c = self.complete(system=system, user=user, model=model, user_id=user_id, messages=messages)
         if c.text:
             yield {'type': 'delta', 'text': c.text}
         yield {
@@ -125,7 +125,7 @@ class ClaudeProvider(BaseLLMProvider):
     name = 'anthropic'
     default_model = 'claude-opus-4-7'
 
-    def complete(self, *, system, user, model=None, user_id=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
         if not self.config.api_key:
             raise ProviderError('No Anthropic API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -137,7 +137,7 @@ class ClaudeProvider(BaseLLMProvider):
             'model': model,
             'max_tokens': 4096,
             'system': system,
-            'messages': [{'role': 'user', 'content': user}],
+            'messages': messages or [{'role': 'user', 'content': user or ''}],
         }
         if user_id:
             payload['metadata'] = {'user_id': user_id}
@@ -156,7 +156,7 @@ class ClaudeProvider(BaseLLMProvider):
             raw=data,
         )
 
-    def stream(self, *, system, user, model=None, user_id=None):
+    def stream(self, *, system, user=None, model=None, user_id=None, messages=None):
         """Stream the Anthropic Messages API (SSE). Yields text deltas, then a
         final ``done`` event carrying the model + token usage."""
         if not self.config.api_key:
@@ -170,7 +170,7 @@ class ClaudeProvider(BaseLLMProvider):
         }
         payload = {
             'model': model, 'max_tokens': 4096, 'stream': True,
-            'system': system, 'messages': [{'role': 'user', 'content': user}],
+            'system': system, 'messages': messages or [{'role': 'user', 'content': user or ''}],
         }
         if user_id:
             payload['metadata'] = {'user_id': user_id}
@@ -230,17 +230,16 @@ class OpenAIProvider(BaseLLMProvider):
     name = 'openai'
     default_model = 'gpt-4o'
 
-    def complete(self, *, system, user, model=None, user_id=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
         if not self.config.api_key:
             raise ProviderError('No OpenAI API key configured.')
         model = model or self.config.default_model or self.default_model
         headers = {'Authorization': f'Bearer {self.config.api_key}'}
+        chat = [{'role': 'system', 'content': system}]
+        chat += messages or [{'role': 'user', 'content': user or ''}]
         payload = {
             'model': model,
-            'messages': [
-                {'role': 'system', 'content': system},
-                {'role': 'user', 'content': user},
-            ],
+            'messages': chat,
             'temperature': 0.2,
         }
         if user_id:
@@ -276,7 +275,7 @@ class LocalProvider(BaseLLMProvider):
     name = 'local'
     default_model = 'llama3.1'
 
-    def complete(self, *, system, user, model=None, user_id=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
         # user_id intentionally unused — self-hosted endpoints typically
         # don't need provider-side attribution and many ignore extra fields.
         del user_id
@@ -287,16 +286,14 @@ class LocalProvider(BaseLLMProvider):
         if self.config.api_key:
             headers['Authorization'] = f'Bearer {self.config.api_key}'
         base = self.config.base_url.rstrip('/')
+        chat = [{'role': 'system', 'content': system}] + (messages or [{'role': 'user', 'content': user or ''}])
 
         # Ollama native API.
         try:
             payload = {
                 'model': model,
                 'stream': False,
-                'messages': [
-                    {'role': 'system', 'content': system},
-                    {'role': 'user', 'content': user},
-                ],
+                'messages': chat,
             }
             data = self._post_json(f'{base}/api/chat', headers, payload)
             if 'message' in data:
@@ -314,10 +311,7 @@ class LocalProvider(BaseLLMProvider):
         # OpenAI-compatible fallback.
         payload = {
             'model': model,
-            'messages': [
-                {'role': 'system', 'content': system},
-                {'role': 'user', 'content': user},
-            ],
+            'messages': chat,
             'temperature': 0.2,
         }
         data = self._post_json(f'{base}/v1/chat/completions', headers, payload)

@@ -957,7 +957,7 @@ export const coResearcher = {
    * the persisted query (incl. citations), or onError with a message.
    */
   async askStream(
-    payload: { question: string; scope?: CorpusKind[] },
+    payload: { question: string; scope?: CorpusKind[]; history?: { role: 'user' | 'assistant'; content: string }[] },
     handlers: {
       onDelta: (text: string) => void;
       onDone: (q: ResearchQueryData) => void;
