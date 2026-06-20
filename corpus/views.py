@@ -105,9 +105,10 @@ class CoResearcherAskView(APIView):
                     snippet=(a.text or '')[:1000],
                 )
 
-        # Credits gate (hard), then per-minute rate + day/week/month throttles.
+        # Credits hard gate: reserve up-front (atomic), then throttle, then call.
+        # Reconcile the hold to actual usage on every exit path.
         try:
-            credits.assert_can_spend(request.user)
+            hold = credits.begin_charge(request.user)
         except InsufficientCreditsError as c_err:
             q.error = str(c_err)
             q.save(update_fields=['error'])
@@ -115,6 +116,7 @@ class CoResearcherAskView(APIView):
         try:
             _enforce_pool_limits(request.user)
         except QuotaError as q_err:
+            credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
             q.error = str(q_err)
             q.save(update_fields=['error'])
             return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -127,6 +129,7 @@ class CoResearcherAskView(APIView):
                 user_id=_tenant_pseudo_id(request.user),
             )
         except ProviderError as e:
+            credits.release_charge(request.user, hold, 0, note='provider error — refunded')
             _log_usage(request.user, config, error=str(e))
             q.error = str(e)
             q.save(update_fields=['error'])
@@ -136,7 +139,10 @@ class CoResearcherAskView(APIView):
             )
 
         usage = _log_usage(request.user, config, completion=completion)
-        credits.charge_usage(request.user, completion, usage_log=usage, note='AI-Researcher ask')
+        credits.release_charge(
+            request.user, hold, completion.tokens_in + completion.tokens_out,
+            usage_log=usage, note='AI-Researcher ask',
+        )
         q.answer_text = completion.text
         q.model = completion.model or q.model
         q.tokens_in = completion.tokens_in

@@ -209,7 +209,8 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
     serializer_class = WorkflowStageSerializer
     permission_classes = [IsAuthenticated]
     queryset = WorkflowStage.objects.none()
-    http_method_names = ['get', 'patch', 'head', 'options']
+    # 'post' is required for the run/ and approve/ detail actions.
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
@@ -243,15 +244,19 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Credits are the hard gate (must have a positive balance to start);
-        # the per-minute rate and day/week/month token quotas throttle on top.
+        # Credits are the hard gate: atomically reserve up-front so concurrent
+        # runs can't overspend a balance. The per-minute rate and day/week/month
+        # token quotas throttle on top. Reconcile the hold to actual usage in a
+        # finally-style block on every exit path.
         try:
-            credits.assert_can_spend(request.user)
+            hold = credits.begin_charge(request.user)
         except InsufficientCreditsError as c:
             return Response({'detail': str(c)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
         try:
             _enforce_pool_limits(request.user)
         except QuotaError as q:
+            credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
             return Response({'detail': str(q)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         adapter = get_provider(config)
@@ -264,6 +269,7 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
                 user_id=_tenant_pseudo_id(request.user),
             )
         except ProviderError as e:
+            credits.release_charge(request.user, hold, 0, note='provider error — refunded')
             _log_usage(request.user, config, error=str(e))
             result = StageResult.objects.create(
                 stage=stage, provider=config.provider, model=model or '',
@@ -276,7 +282,10 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
             )
 
         usage = _log_usage(request.user, config, completion=completion)
-        credits.charge_usage(request.user, completion, usage_log=usage, note=f'Stage run: {stage.title}'[:240])
+        credits.release_charge(
+            request.user, hold, completion.tokens_in + completion.tokens_out,
+            usage_log=usage, note=f'Stage run: {stage.title}'[:240],
+        )
         result = StageResult.objects.create(
             stage=stage,
             provider=config.provider,

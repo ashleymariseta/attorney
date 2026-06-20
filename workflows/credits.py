@@ -146,6 +146,57 @@ def charge_usage(user, completion=None, *, usage_log=None, note='') -> None:
     debit_credits(resolve_account(user=user), tokens, usage_log=usage_log, note=note)
 
 
+# How many tokens to reserve up-front, before the real cost is known. A run is
+# blocked unless the account can cover (at least part of) this. Reconciled to
+# the actual token count after the call.
+ESTIMATED_TOKENS_PER_CALL = 6000
+
+
+@transaction.atomic
+def begin_charge(user, estimate: int = ESTIMATED_TOKENS_PER_CALL) -> int:
+    """Atomically reserve credits before an AI call so concurrent runs can't
+    overspend a balance. Locks the account row, checks the balance, and holds
+    ``min(estimate, balance)`` tokens. Returns the amount held. Raises
+    :class:`InsufficientCreditsError` when the balance is exhausted.
+
+    Always pair with :func:`release_charge` (on success *and* every failure
+    path) to reconcile the hold to actual usage and refund the remainder.
+    """
+    account = resolve_account(user=user)
+    locked = AICreditAccount.objects.select_for_update().get(pk=account.pk)
+    if locked.balance <= 0:
+        raise InsufficientCreditsError(
+            'Your AI credit balance is exhausted. Buy an AI credit pack and upload '
+            'proof of payment to unlock more.'
+        )
+    hold = min(int(estimate), locked.balance)
+    locked.balance -= hold
+    locked.save(update_fields=['balance', 'updated_at'])
+    AICreditTransaction.objects.create(
+        account=locked, kind=CreditTxnKind.HOLD, amount=-hold,
+        balance_after=locked.balance, note='AI run reserved',
+    )
+    return hold
+
+
+@transaction.atomic
+def release_charge(user, hold: int, actual_tokens: int, *, usage_log=None, note='') -> None:
+    """Reconcile a reservation from :func:`begin_charge` to actual usage:
+    refund the unused portion (or debit any overage) and record the real spend.
+    Pass ``actual_tokens=0`` when the call failed to refund the whole hold."""
+    account = AICreditAccount.objects.select_for_update().get(pk=resolve_account(user=user).pk)
+    actual = max(int(actual_tokens or 0), 0)
+    delta = int(hold) - actual  # > 0 → refund unused; < 0 → debit overage
+    account.balance += delta
+    account.lifetime_spent += actual
+    account.save(update_fields=['balance', 'lifetime_spent', 'updated_at'])
+    AICreditTransaction.objects.create(
+        account=account, kind=CreditTxnKind.DEBIT, amount=delta,
+        balance_after=account.balance, usage_log=usage_log,
+        note=note or f'AI run settled ({actual} tokens)',
+    )
+
+
 def _order_recipients(order):
     """Who to tell about an order's outcome: the submitting lawyer, the
     personal owner, and (for firm orders) the firm's admin."""

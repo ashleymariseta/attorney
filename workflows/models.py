@@ -456,6 +456,7 @@ class AICreditOrder(models.Model):
 
 class CreditTxnKind(models.TextChoices):
     GRANT = 'grant', 'Grant (purchase verified)'
+    HOLD = 'hold', 'Hold (reservation for an AI run)'
     DEBIT = 'debit', 'Debit (AI usage)'
     REFUND = 'refund', 'Refund'
     ADJUSTMENT = 'adjustment', 'Manual adjustment'
