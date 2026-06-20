@@ -1,6 +1,10 @@
 from rest_framework import serializers
 
 from .models import (
+    AICreditAccount,
+    AICreditOrder,
+    AICreditPlan,
+    AICreditTransaction,
     LLMProvider,
     LLMProviderConfig,
     StageResult,
@@ -130,3 +134,72 @@ class LLMProviderConfigSerializer(serializers.ModelSerializer):
 
     def get_has_api_key(self, obj):
         return bool(obj.api_key)
+
+
+# ---- AI credits / subscriptions -------------------------------------------
+
+class AICreditPlanSerializer(serializers.ModelSerializer):
+    period_display = serializers.CharField(source='get_period_display', read_only=True)
+
+    class Meta:
+        model = AICreditPlan
+        fields = [
+            'id', 'name', 'slug', 'description', 'price', 'currency',
+            'token_credits', 'period', 'period_display',
+        ]
+        read_only_fields = fields
+
+
+class AICreditTransactionSerializer(serializers.ModelSerializer):
+    kind_display = serializers.CharField(source='get_kind_display', read_only=True)
+
+    class Meta:
+        model = AICreditTransaction
+        fields = ['id', 'kind', 'kind_display', 'amount', 'balance_after', 'note', 'created_at']
+        read_only_fields = fields
+
+
+class AICreditAccountSerializer(serializers.ModelSerializer):
+    owner_label = serializers.CharField(read_only=True)
+    transactions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AICreditAccount
+        fields = [
+            'owner_label', 'balance', 'lifetime_granted', 'lifetime_spent',
+            'updated_at', 'transactions',
+        ]
+        read_only_fields = fields
+
+    def get_transactions(self, obj):
+        recent = obj.transactions.all()[:25]
+        return AICreditTransactionSerializer(recent, many=True).data
+
+
+class AICreditOrderSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    plan_name = serializers.CharField(source='plan.name', read_only=True, default='')
+
+    class Meta:
+        model = AICreditOrder
+        fields = [
+            'id', 'plan', 'plan_name', 'token_credits', 'amount', 'currency',
+            'reference', 'method', 'proof_of_payment', 'note',
+            'status', 'status_display', 'created_at', 'reviewed_at', 'review_note',
+        ]
+        read_only_fields = [
+            'id', 'plan_name', 'token_credits', 'status', 'status_display',
+            'created_at', 'reviewed_at', 'review_note',
+        ]
+
+
+class AICreditOrderCreateSerializer(serializers.ModelSerializer):
+    """Lawyer-facing order creation. ``plan`` is required; token_credits,
+    amount and currency are snapshotted from the plan in the view. Owner is
+    resolved server-side (firm-if-any-else-lawyer)."""
+
+    plan = serializers.PrimaryKeyRelatedField(queryset=AICreditPlan.objects.filter(is_active=True))
+
+    class Meta:
+        model = AICreditOrder
+        fields = ['plan', 'reference', 'method', 'note', 'proof_of_payment']

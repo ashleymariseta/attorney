@@ -7,10 +7,15 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+
 from . import credits
 from .credits import InsufficientCreditsError
 from .models import (
+    AICreditOrder,
+    AICreditPlan,
     AIPlatformSettings,
+    CreditOrderStatus,
     LLMProvider,
     LLMProviderConfig,
     LLMUsageLog,
@@ -23,6 +28,10 @@ from .models import (
 )
 from .providers import ProviderError, get_provider, pool_config
 from .serializers import (
+    AICreditAccountSerializer,
+    AICreditOrderCreateSerializer,
+    AICreditOrderSerializer,
+    AICreditPlanSerializer,
     StageResultSerializer,
     WorkflowCreateSerializer,
     WorkflowDetailSerializer,
@@ -412,4 +421,79 @@ def _usage_summary(scope_user) -> dict:
         'results': out,
     }
 
+
+# ---- AI credits / subscriptions (lawyer-facing) ----------------------------
+
+class AICreditPlanViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catalogue of active credit packs the lawyer can buy."""
+
+    serializer_class = AICreditPlanSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = AICreditPlan.objects.filter(is_active=True)
+
+
+class AICreditAccountView(viewsets.ViewSet):
+    """``GET /ai-credit-account/`` — the caller's resolved credit account
+    (firm-if-any-else-lawyer) with balance, lifetime totals and recent
+    ledger entries."""
+
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        account = credits.resolve_account(user=request.user)
+        return Response(AICreditAccountSerializer(account).data)
+
+
+class AICreditOrderViewSet(viewsets.ModelViewSet):
+    """The lawyer's own credit orders. ``POST`` (multipart) creates a pending
+    order with a proof of payment; an admin verifies it to grant credits."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    http_method_names = ['get', 'post', 'head', 'options']
+    queryset = AICreditOrder.objects.none()
+
+    def get_serializer_class(self):
+        return AICreditOrderCreateSerializer if self.action == 'create' else AICreditOrderSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return AICreditOrder.objects.none()
+        # A lawyer sees orders billed to their account: their own plus their
+        # firm's (the shared pool they draw from).
+        user = self.request.user
+        firm = credits.firm_for(user)
+        qs = AICreditOrder.objects.filter(owner_user=user)
+        if firm is not None:
+            qs = AICreditOrder.objects.filter(owner_firm=firm) | qs
+        return qs.select_related('plan').distinct()
+
+    def create(self, request, *args, **kwargs):
+        if not _is_lawyer(request.user):
+            return Response(
+                {'detail': 'Only practitioners can buy AI credits.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        plan = ser.validated_data['plan']
+
+        # Route the order to the firm's account if the lawyer belongs to one,
+        # else to their personal account — matching how credits are consumed.
+        firm = credits.firm_for(request.user)
+        owner = {'owner_firm': firm} if firm is not None else {'owner_user': request.user}
+
+        order = AICreditOrder.objects.create(
+            plan=plan,
+            token_credits=plan.token_credits,
+            amount=plan.price,
+            currency=plan.currency,
+            reference=ser.validated_data.get('reference', ''),
+            method=ser.validated_data.get('method', ''),
+            note=ser.validated_data.get('note', ''),
+            proof_of_payment=ser.validated_data.get('proof_of_payment'),
+            status=CreditOrderStatus.PENDING,
+            **owner,
+        )
+        return Response(AICreditOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 

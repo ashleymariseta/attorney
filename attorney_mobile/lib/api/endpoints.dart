@@ -606,6 +606,44 @@ class Endpoints {
   Future<Map<String, dynamic>> approveWorkflowStage(int stageId) =>
       _post('/api/v1/workflow-stages/$stageId/approve/', (j) => j as Map<String, dynamic>);
 
+  // --- AI credits / subscriptions ---
+  Future<List<Map<String, dynamic>>> listAiCreditPlans() =>
+      _get('/api/v1/ai-credit-plans/', (j) {
+        final results = (j['results'] as List? ?? const []);
+        return results.cast<Map<String, dynamic>>();
+      });
+
+  Future<Map<String, dynamic>> aiCreditAccount() =>
+      _get('/api/v1/ai-credit-account/', (j) => j as Map<String, dynamic>);
+
+  Future<List<Map<String, dynamic>>> listAiCreditOrders() =>
+      _get('/api/v1/ai-credit-orders/', (j) {
+        final results = (j['results'] as List? ?? const []);
+        return results.cast<Map<String, dynamic>>();
+      });
+
+  Future<Map<String, dynamic>> createAiCreditOrder({
+    required int planId,
+    required String filePath,
+    String? reference,
+    String? method,
+    String? note,
+  }) async {
+    try {
+      final form = FormData.fromMap({
+        'plan': planId,
+        if (reference != null && reference.isNotEmpty) 'reference': reference,
+        if (method != null && method.isNotEmpty) 'method': method,
+        if (note != null && note.isNotEmpty) 'note': note,
+        'proof_of_payment': await MultipartFile.fromFile(filePath),
+      });
+      final res = await _d.post('/api/v1/ai-credit-orders/', data: form);
+      return res.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   Future<List<Map<String, dynamic>>> listCorpusCollections() =>
       _get('/api/v1/corpus-collections/', (j) {
         final results = (j['results'] as List? ?? const []);

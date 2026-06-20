@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, Sparkles, Users, Wallet, X } from 'lucide-react';
+import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coins, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, Sparkles, Users, Wallet, X } from 'lucide-react';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import NotificationBell from '@/components/NotificationBell';
 import { emailVerify, ApiError } from '@/lib/api';
@@ -478,6 +478,7 @@ function AIWorkflowsGroup({
           {subNavItem('/ai-workflows', 'My Workflows', <Sparkles size={13} />)}
           {subNavItem('/ai-workflows/ai-researcher', 'AI-Researcher', <BookText size={13} />)}
           {subNavItem('/ai-workflows/templates', 'Templates', <FileText size={13} />)}
+          {subNavItem('/ai-workflows/credits', 'AI Credits', <Coins size={13} />)}
         </div>
       )}
     </div>

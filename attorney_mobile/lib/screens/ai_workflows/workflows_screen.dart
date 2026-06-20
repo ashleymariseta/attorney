@@ -61,6 +61,11 @@ class _WorkflowsScreenState extends ConsumerState<WorkflowsScreen> {
             icon: const Icon(LucideIcons.bookOpen),
             onPressed: () => context.go(Routes.aiResearcher),
           ),
+          IconButton(
+            tooltip: 'AI Credits',
+            icon: const Icon(LucideIcons.coins),
+            onPressed: () => context.go(Routes.aiCredits),
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(

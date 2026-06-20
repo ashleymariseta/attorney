@@ -25,7 +25,7 @@ class InsufficientCreditsError(Exception):
     API as HTTP 402 Payment Required."""
 
 
-def _firm_for(user):
+def firm_for(user):
     """Return the user's firm (via their LawyerProfile) or None."""
     from core.models import LawyerProfile
 
@@ -33,6 +33,10 @@ def _firm_for(user):
         LawyerProfile.objects.filter(user=user).select_related('firm').first()
     )
     return profile.firm if (profile and profile.firm_id) else None
+
+
+# Backwards-compatible private alias.
+_firm_for = firm_for
 
 
 def resolve_account(*, user=None, firm=None):

@@ -1030,6 +1030,78 @@ export interface WorkflowDetail extends WorkflowListItem {
   stages: WorkflowStageData[];
 }
 
+// ---- AI credits / subscriptions ----
+
+export interface AiCreditPlan {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  price: string;
+  currency: string;
+  token_credits: number;
+  period: 'one_time' | 'monthly' | 'quarterly' | 'annual';
+  period_display: string;
+}
+
+export interface AiCreditTransaction {
+  id: number;
+  kind: 'grant' | 'debit' | 'refund' | 'adjustment' | 'expiry';
+  kind_display: string;
+  amount: number;
+  balance_after: number;
+  note: string;
+  created_at: string;
+}
+
+export interface AiCreditAccount {
+  owner_label: string;
+  balance: number;
+  lifetime_granted: number;
+  lifetime_spent: number;
+  updated_at: string;
+  transactions: AiCreditTransaction[];
+}
+
+export interface AiCreditOrder {
+  id: number;
+  plan: number | null;
+  plan_name: string;
+  token_credits: number;
+  amount: string;
+  currency: string;
+  reference: string;
+  method: string;
+  proof_of_payment: string | null;
+  note: string;
+  status: 'pending' | 'verified' | 'rejected' | 'cancelled';
+  status_display: string;
+  created_at: string;
+  reviewed_at: string | null;
+  review_note: string;
+}
+
+export const aiCredits = {
+  plans() {
+    return api<Paginated<AiCreditPlan>>('/api/v1/ai-credit-plans/');
+  },
+  account() {
+    return api<AiCreditAccount>('/api/v1/ai-credit-account/');
+  },
+  orders() {
+    return api<Paginated<AiCreditOrder>>('/api/v1/ai-credit-orders/');
+  },
+  createOrder(input: { plan: number; file?: File; reference?: string; method?: string; note?: string }) {
+    const form = new FormData();
+    form.append('plan', String(input.plan));
+    if (input.file) form.append('proof_of_payment', input.file);
+    if (input.reference) form.append('reference', input.reference);
+    if (input.method) form.append('method', input.method);
+    if (input.note) form.append('note', input.note);
+    return api<AiCreditOrder>('/api/v1/ai-credit-orders/', { method: 'POST', body: form });
+  },
+};
+
 export const workflows = {
   templates() {
     return api<Paginated<WorkflowTemplate>>('/api/v1/workflow-templates/');

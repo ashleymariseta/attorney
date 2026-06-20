@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'screens/admin/llm_usage_screen.dart';
+import 'screens/ai_workflows/ai_credits_screen.dart';
 import 'screens/ai_workflows/ai_researcher_screen.dart';
 import 'screens/ai_workflows/templates_screen.dart';
 import 'screens/ai_workflows/workflow_detail_screen.dart';
@@ -67,6 +68,7 @@ class Routes {
   static String workflow(int id) => '/ai-workflows/$id';
   static const aiResearcher = '/ai-workflows/ai-researcher';
   static const workflowTemplates = '/ai-workflows/templates';
+  static const aiCredits = '/ai-workflows/credits';
 
   static const adminLlmUsage = '/admin/llm-usage';
 }
@@ -181,6 +183,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: Routes.aiWorkflows, builder: (_, __) => const WorkflowsScreen()),
           GoRoute(path: Routes.aiResearcher, builder: (_, __) => const AiResearcherScreen()),
           GoRoute(path: Routes.workflowTemplates, builder: (_, __) => const WorkflowTemplatesScreen()),
+          GoRoute(path: Routes.aiCredits, builder: (_, __) => const AiCreditsScreen()),
           GoRoute(
             path: '/ai-workflows/:id',
             builder: (_, s) => WorkflowDetailScreen(workflowId: int.parse(s.pathParameters['id']!)),
