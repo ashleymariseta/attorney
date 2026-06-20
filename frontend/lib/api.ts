@@ -953,14 +953,14 @@ export const coResearcher = {
     });
   },
   /**
-   * Stream an answer over SSE. Calls onDelta for each token chunk, onDone with
-   * the persisted query (incl. citations), or onError with a message.
+   * Stream an answer over SSE. onDelta fires per token chunk, onDone with the
+   * saved conversation, onError with a message.
    */
   async askStream(
-    payload: { question: string; scope?: CorpusKind[]; history?: { role: 'user' | 'assistant'; content: string }[] },
+    payload: { question: string; scope?: CorpusKind[]; conversation_id?: number | null },
     handlers: {
       onDelta: (text: string) => void;
-      onDone: (q: ResearchQueryData) => void;
+      onDone: (conversation: ResearchConversationDetail) => void;
       onError: (detail: string) => void;
     },
   ) {
@@ -988,14 +988,14 @@ export const coResearcher = {
       for (const frame of frames) {
         const line = frame.split('\n').find((l) => l.startsWith('data:'));
         if (!line) continue;
-        let evt: { type: string; text?: string; detail?: string; query?: ResearchQueryData };
+        let evt: { type: string; text?: string; detail?: string; conversation?: ResearchConversationDetail };
         try {
           evt = JSON.parse(line.slice(5).trim());
         } catch {
           continue;
         }
         if (evt.type === 'delta' && evt.text) handlers.onDelta(evt.text);
-        else if (evt.type === 'done' && evt.query) handlers.onDone(evt.query);
+        else if (evt.type === 'done' && evt.conversation) handlers.onDone(evt.conversation);
         else if (evt.type === 'error') handlers.onError(evt.detail || 'Request failed.');
       }
     }
@@ -1003,7 +1003,37 @@ export const coResearcher = {
   history() {
     return api<Paginated<ResearchQueryData>>('/api/v1/research-queries/');
   },
+  conversations() {
+    return api<Paginated<ResearchConversationSummary>>('/api/v1/research-conversations/');
+  },
+  conversation(id: number) {
+    return api<ResearchConversationDetail>(`/api/v1/research-conversations/${id}/`);
+  },
+  deleteConversation(id: number) {
+    return api<void>(`/api/v1/research-conversations/${id}/`, { method: 'DELETE' });
+  },
 };
+
+export interface ResearchConversationSummary {
+  id: number;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ResearchConversationDetail {
+  id: number;
+  title: string;
+  messages: ChatMessage[];
+  created_at: string;
+  updated_at: string;
+}
 
 // ---- AI Workflows ----
 export type LlmProviderId = 'anthropic' | 'openai' | 'local';

@@ -8,9 +8,18 @@ import remarkGfm from 'remark-gfm';
  * document styling. No raw HTML is rendered (react-markdown default), so the
  * output is safe.
  */
-export default function Markdown({ children, className = '' }: { children: string; className?: string }) {
+export default function Markdown({
+  children,
+  className = '',
+  size = 'base',
+}: {
+  children: string;
+  className?: string;
+  size?: 'sm' | 'base';
+}) {
+  const sizeClass = size === 'sm' ? 'text-[13px]' : 'text-[15px]';
   return (
-    <div className={`md-body text-[15px] leading-relaxed text-ink ${className}`}>
+    <div className={`md-body ${sizeClass} leading-relaxed text-ink ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

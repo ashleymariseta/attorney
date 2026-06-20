@@ -5,6 +5,7 @@ from .views import (
     CorpusCollectionViewSet,
     CoResearcherAskView,
     CoResearcherStreamView,
+    ResearchConversationViewSet,
     ResearchQueryViewSet,
 )
 
@@ -12,6 +13,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'corpus-collections', CorpusCollectionViewSet, basename='corpus-collection')
 router.register(r'research-queries', ResearchQueryViewSet, basename='research-query')
+router.register(r'research-conversations', ResearchConversationViewSet, basename='research-conversation')
 
 urlpatterns = [
     path('co-researcher/ask/', CoResearcherAskView.as_view(), name='coresearcher-ask'),

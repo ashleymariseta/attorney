@@ -6,6 +6,7 @@ from .models import (
     CorpusCollection,
     CorpusKind,
     ResearchCitation,
+    ResearchConversation,
     ResearchQuery,
 )
 
@@ -85,3 +86,22 @@ class AskSerializer(serializers.Serializer):
     )
     provider_config_id = serializers.IntegerField(required=False)
     model = serializers.CharField(required=False, allow_blank=True)
+
+
+class ConversationListSerializer(serializers.ModelSerializer):
+    message_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResearchConversation
+        fields = ['id', 'title', 'message_count', 'created_at', 'updated_at']
+        read_only_fields = fields
+
+    def get_message_count(self, obj):
+        return len(obj.messages or [])
+
+
+class ConversationDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResearchConversation
+        fields = ['id', 'title', 'messages', 'created_at', 'updated_at']
+        read_only_fields = fields

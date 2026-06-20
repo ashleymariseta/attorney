@@ -54,18 +54,33 @@ class StreamAskTests(APITestCase):
         self.assertEqual(credits.balance_for(self.user), 10_000 - 42)
 
     @patch('corpus.views.get_provider', fake_stream_adapter)
-    def test_history_is_forwarded_for_multiturn(self):
+    def test_conversation_saved_and_resumed(self):
+        from corpus.models import ResearchConversation
         self.client.force_authenticate(self.user)
-        res = self.client.post('/api/v1/co-researcher/ask/stream/', {
-            'question': 'and for civil marriages?',
-            'history': [
-                {'role': 'user', 'content': 'what governs customary marriages?'},
-                {'role': 'assistant', 'content': 'The Customary Marriages Act.'},
-            ],
-        }, format='json')
-        self.assertEqual(res.status_code, 200)
-        b''.join(res.streaming_content)  # drain
-        self.assertEqual(ResearchQuery.objects.filter(owner=self.user).count(), 1)
+        # First turn creates a conversation.
+        res = self.client.post('/api/v1/co-researcher/ask/stream/',
+                               {'question': 'what governs customary marriages?'}, format='json')
+        body = b''.join(res.streaming_content).decode()
+        self.assertIn('"conversation"', body)
+        conv = ResearchConversation.objects.get(owner=self.user)
+        self.assertEqual(len(conv.messages), 2)  # user + assistant
+        self.assertTrue(conv.title)
+        # Second turn resumes the same conversation → appends, not a new one.
+        res2 = self.client.post('/api/v1/co-researcher/ask/stream/',
+                                {'question': 'and civil marriages?', 'conversation_id': conv.id}, format='json')
+        b''.join(res2.streaming_content)
+        self.assertEqual(ResearchConversation.objects.filter(owner=self.user).count(), 1)
+        conv.refresh_from_db()
+        self.assertEqual(len(conv.messages), 4)  # two turns
+
+    @patch('corpus.views.get_provider', fake_stream_adapter)
+    def test_cannot_open_another_users_conversation(self):
+        from corpus.models import ResearchConversation
+        mine = ResearchConversation.objects.create(owner=self.user, title='x', messages=[])
+        other = lawyer('other-conv@test.dev')
+        self.client.force_authenticate(other)
+        res = self.client.get(f'/api/v1/research-conversations/{mine.id}/')
+        self.assertEqual(res.status_code, 404)
 
     @patch('corpus.views.get_provider', fake_stream_adapter)
     def test_stream_blocked_without_credits(self):

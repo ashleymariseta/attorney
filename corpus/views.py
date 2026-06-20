@@ -18,9 +18,11 @@ from workflows.views import (
     _tenant_pseudo_id,
 )
 
-from .models import CorpusCollection, ResearchQuery
+from .models import CorpusCollection, ResearchConversation, ResearchQuery
 from .serializers import (
     AskSerializer,
+    ConversationDetailSerializer,
+    ConversationListSerializer,
     CorpusCollectionSerializer,
     ResearchQuerySerializer,
 )
@@ -160,8 +162,14 @@ class CoResearcherStreamView(APIView):
         ser = AskSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
-        history = request.data.get('history')
+        conversation_id = request.data.get('conversation_id')
         user = request.user
+
+        # Resume an existing conversation (owner-checked) or start a new one.
+        conv = None
+        if conversation_id:
+            conv = ResearchConversation.objects.filter(owner=user, pk=conversation_id).first()
+        prior = list(conv.messages) if conv else []
 
         def stream():
             config = _pick_provider_config()
@@ -184,7 +192,7 @@ class CoResearcherStreamView(APIView):
                 owner=user, question=data['question'], scope=data.get('scope') or [],
                 provider=config.provider, model=config.default_model or '',
             )
-            messages = _build_messages(data['question'], history)
+            messages = _build_messages(data['question'], prior)
             adapter = get_provider(config)
             full, tokens_in, tokens_out, model = '', 0, 0, config.default_model
             settled = False
@@ -219,12 +227,44 @@ class CoResearcherStreamView(APIView):
             q.tokens_in = tokens_in
             q.tokens_out = tokens_out
             q.save(update_fields=['answer_text', 'model', 'tokens_in', 'tokens_out'])
-            yield _sse({'type': 'done', 'query': ResearchQuerySerializer(q).data})
+
+            # Persist the chat thread for the history sidebar.
+            nonlocal conv
+            thread = prior + [
+                {'role': 'user', 'content': data['question']},
+                {'role': 'assistant', 'content': full},
+            ]
+            if conv is None:
+                conv = ResearchConversation.objects.create(
+                    owner=user, title=data['question'][:120], messages=thread,
+                )
+            else:
+                conv.messages = thread
+                conv.save(update_fields=['messages', 'updated_at'])
+
+            yield _sse({'type': 'done', 'query': ResearchQuerySerializer(q).data,
+                        'conversation': ConversationDetailSerializer(conv).data})
 
         resp = StreamingHttpResponse(stream(), content_type='text/event-stream')
         resp['Cache-Control'] = 'no-cache'
         resp['X-Accel-Buffering'] = 'no'
         return resp
+
+
+class ResearchConversationViewSet(viewsets.ModelViewSet):
+    """Saved AI-Researcher chat threads (the history sidebar)."""
+
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'delete', 'head', 'options']
+    queryset = ResearchConversation.objects.none()
+
+    def get_serializer_class(self):
+        return ConversationDetailSerializer if self.action == 'retrieve' else ConversationListSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return ResearchConversation.objects.none()
+        return ResearchConversation.objects.filter(owner=self.request.user)
 
 
 class ResearchQueryViewSet(viewsets.ReadOnlyModelViewSet):

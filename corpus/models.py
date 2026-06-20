@@ -114,3 +114,22 @@ class ResearchCitation(models.Model):
 
     class Meta:
         ordering = ['query_id', 'rank']
+
+
+class ResearchConversation(models.Model):
+    """A saved AI-Researcher chat thread (the conversation history shown in the
+    sidebar). ``messages`` is an ordered list of ``{"role", "content"}`` dicts."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='research_conversations'
+    )
+    title = models.CharField(max_length=200, blank=True)
+    messages = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.title or f'Conversation {self.pk}'
