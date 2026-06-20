@@ -21,6 +21,7 @@ import {
 } from '@/lib/api';
 import { SkeletonCard } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
+import Markdown from '@/components/Markdown';
 
 const KIND_ORDER: CorpusKind[] = ['case', 'judgement', 'rules', 'constitution', 'statute'];
 const KIND_LABEL: Record<CorpusKind, string> = {
@@ -41,6 +42,7 @@ export default function CoResearcherPage() {
   const [scope, setScope] = useState<CorpusKind[]>([]);
   const [busy, setBusy] = useState(false);
   const [current, setCurrent] = useState<ResearchQueryData | null>(null);
+  const [streamText, setStreamText] = useState('');
   const answerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,14 +70,21 @@ export default function CoResearcherPage() {
     if (!question.trim()) return;
     setBusy(true);
     setCurrent(null);
+    setStreamText('');
+    setTimeout(() => answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     try {
-      const res = await coResearcher.ask({ question: question.trim(), scope });
-      setCurrent(res);
-      setHistory((prev) => [res, ...prev]);
-      setTimeout(() => answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      if (!res.answer_text && !res.citations.length) {
-        toast.info('No matching authorities — try widening the scope.');
-      }
+      await coResearcher.askStream(
+        { question: question.trim(), scope },
+        {
+          onDelta: (t) => setStreamText((prev) => prev + t),
+          onDone: (q) => {
+            setCurrent(q);
+            setStreamText('');
+            setHistory((prev) => [q, ...prev]);
+          },
+          onError: (detail) => toast.error(detail),
+        },
+      );
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'AI-Researcher request failed.');
     } finally {
@@ -158,6 +167,22 @@ export default function CoResearcherPage() {
           </button>
         </div>
       </form>
+
+      {busy && !current && (
+        <div ref={answerRef} className="mt-8">
+          <div className="rounded-2xl border border-brand-light/30 bg-gradient-to-br from-brand-light/10 via-white to-white p-5 shadow-sm">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-dark">
+              <Sparkles size={11} /> Answer
+              <Loader2 size={11} className="animate-spin text-muted" />
+            </div>
+            {streamText ? (
+              <div className="mt-2"><Markdown>{streamText}</Markdown></div>
+            ) : (
+              <p className="mt-2 text-sm text-muted">Searching the corpus and drafting…</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {current && (
         <div ref={answerRef} className="mt-8 space-y-4">

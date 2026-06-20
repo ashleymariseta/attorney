@@ -1,7 +1,12 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import CorpusCollectionViewSet, CoResearcherAskView, ResearchQueryViewSet
+from .views import (
+    CorpusCollectionViewSet,
+    CoResearcherAskView,
+    CoResearcherStreamView,
+    ResearchQueryViewSet,
+)
 
 
 router = DefaultRouter()
@@ -10,4 +15,5 @@ router.register(r'research-queries', ResearchQueryViewSet, basename='research-qu
 
 urlpatterns = [
     path('co-researcher/ask/', CoResearcherAskView.as_view(), name='coresearcher-ask'),
+    path('co-researcher/ask/stream/', CoResearcherStreamView.as_view(), name='coresearcher-ask-stream'),
 ] + router.urls

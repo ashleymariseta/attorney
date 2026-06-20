@@ -84,6 +84,23 @@ class BaseLLMProvider(abc.ABC):
         be attributed without sending PII upstream.
         """
 
+    def stream(self, *, system, user, model=None, user_id=None):
+        """Yield incremental output as dicts:
+            {'type': 'delta', 'text': '...'}            (zero or more)
+            {'type': 'done', 'text': full, 'model': m,
+             'tokens_in': n, 'tokens_out': n}           (exactly one, last)
+
+        Default implementation has no real streaming — it runs ``complete``
+        and emits a single delta + done. Providers that support SSE override
+        this (see :class:`ClaudeProvider`)."""
+        c = self.complete(system=system, user=user, model=model, user_id=user_id)
+        if c.text:
+            yield {'type': 'delta', 'text': c.text}
+        yield {
+            'type': 'done', 'text': c.text, 'model': c.model,
+            'tokens_in': c.tokens_in, 'tokens_out': c.tokens_out,
+        }
+
     # --- helpers ---------------------------------------------------------
     @staticmethod
     def _post_json(url: str, headers: dict, payload: dict, timeout: float = 60.0) -> dict:
@@ -138,6 +155,73 @@ class ClaudeProvider(BaseLLMProvider):
             tokens_out=int(usage.get('output_tokens', 0) or 0),
             raw=data,
         )
+
+    def stream(self, *, system, user, model=None, user_id=None):
+        """Stream the Anthropic Messages API (SSE). Yields text deltas, then a
+        final ``done`` event carrying the model + token usage."""
+        if not self.config.api_key:
+            raise ProviderError('No Anthropic API key configured.')
+        model = model or self.config.default_model or self.default_model
+        headers = {
+            'x-api-key': self.config.api_key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'accept': 'text/event-stream',
+        }
+        payload = {
+            'model': model, 'max_tokens': 4096, 'stream': True,
+            'system': system, 'messages': [{'role': 'user', 'content': user}],
+        }
+        if user_id:
+            payload['metadata'] = {'user_id': user_id}
+
+        body = json.dumps(payload).encode('utf-8')
+        req = urlrequest.Request('https://api.anthropic.com/v1/messages', data=body, method='POST')
+        for k, v in headers.items():
+            req.add_header(k, v)
+
+        text_parts: list[str] = []
+        tokens_in = tokens_out = 0
+        resolved_model = model
+        try:
+            with urlrequest.urlopen(req, timeout=120, context=_SSL_CONTEXT) as resp:
+                for raw in resp:
+                    line = raw.decode('utf-8', errors='replace').strip()
+                    if not line.startswith('data:'):
+                        continue
+                    chunk = line[len('data:'):].strip()
+                    if not chunk:
+                        continue
+                    try:
+                        evt = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+                    etype = evt.get('type')
+                    if etype == 'message_start':
+                        u = (evt.get('message', {}) or {}).get('usage', {}) or {}
+                        tokens_in = int(u.get('input_tokens', 0) or 0)
+                        resolved_model = (evt.get('message', {}) or {}).get('model', resolved_model)
+                    elif etype == 'content_block_delta':
+                        delta = evt.get('delta', {}) or {}
+                        if delta.get('type') == 'text_delta':
+                            piece = delta.get('text', '')
+                            if piece:
+                                text_parts.append(piece)
+                                yield {'type': 'delta', 'text': piece}
+                    elif etype == 'message_delta':
+                        u = evt.get('usage', {}) or {}
+                        if u.get('output_tokens') is not None:
+                            tokens_out = int(u.get('output_tokens') or 0)
+        except urlerror.HTTPError as e:
+            detail = e.read().decode('utf-8', errors='replace') if e.fp else str(e)
+            raise ProviderError(f'{e.code}: {detail[:500]}')
+        except urlerror.URLError as e:
+            raise ProviderError(f'Could not reach provider: {e.reason}')
+
+        yield {
+            'type': 'done', 'text': ''.join(text_parts), 'model': resolved_model,
+            'tokens_in': tokens_in, 'tokens_out': tokens_out,
+        }
 
 
 class OpenAIProvider(BaseLLMProvider):

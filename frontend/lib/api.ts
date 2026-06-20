@@ -952,6 +952,54 @@ export const coResearcher = {
       body: JSON.stringify(payload),
     });
   },
+  /**
+   * Stream an answer over SSE. Calls onDelta for each token chunk, onDone with
+   * the persisted query (incl. citations), or onError with a message.
+   */
+  async askStream(
+    payload: { question: string; scope?: CorpusKind[] },
+    handlers: {
+      onDelta: (text: string) => void;
+      onDone: (q: ResearchQueryData) => void;
+      onError: (detail: string) => void;
+    },
+  ) {
+    const res = await fetch(`${API_BASE}/api/v1/co-researcher/ask/stream/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getAccess() ? { Authorization: `Bearer ${getAccess()}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.body) {
+      handlers.onError(`Request failed (${res.status}).`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? ''; // keep the incomplete trailing frame
+      for (const frame of frames) {
+        const line = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let evt: { type: string; text?: string; detail?: string; query?: ResearchQueryData };
+        try {
+          evt = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (evt.type === 'delta' && evt.text) handlers.onDelta(evt.text);
+        else if (evt.type === 'done' && evt.query) handlers.onDone(evt.query);
+        else if (evt.type === 'error') handlers.onError(evt.detail || 'Request failed.');
+      }
+    }
+  },
   history() {
     return api<Paginated<ResearchQueryData>>('/api/v1/research-queries/');
   },
