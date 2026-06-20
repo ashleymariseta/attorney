@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, Check, Download, Eye, FileText, Loader2, Pencil, Printer, Save, Send,
+  ArrowLeft, Check, Download, Eye, FileText, Image as ImageIcon, Loader2, Pencil, Printer, Save, Send,
 } from 'lucide-react';
 import {
   workflowDocuments, matters, ApiError,
@@ -29,6 +29,36 @@ export default function DocumentEditorPage({ params }: { params: { id: string } 
   const [dirty, setDirty] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imgRef = useRef<HTMLInputElement>(null);
+
+  async function insertImage(file?: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    if (file.size > 3 * 1024 * 1024) { toast.error('Image too large (max 3 MB).'); return; }
+    const dataUrl: string = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = () => rej(new Error('read failed'));
+      r.readAsDataURL(file);
+    }).catch(() => '') as string;
+    if (!dataUrl) { toast.error('Could not read the image.'); return; }
+    const alt = file.name.replace(/\.[^.]+$/, '');
+    const md = `\n\n![${alt}](${dataUrl})\n\n`;
+    const ta = textareaRef.current;
+    if (ta) {
+      const s = ta.selectionStart ?? body.length;
+      const e = ta.selectionEnd ?? body.length;
+      const next = body.slice(0, s) + md + body.slice(e);
+      setBody(next);
+      setDirty(true);
+      requestAnimationFrame(() => { ta.focus(); const p = s + md.length; ta.setSelectionRange(p, p); });
+    } else {
+      setBody((b) => b + md);
+      setDirty(true);
+    }
+    if (imgRef.current) imgRef.current.value = '';
+  }
 
   useEffect(() => {
     (async () => {
@@ -85,6 +115,7 @@ export default function DocumentEditorPage({ params }: { params: { id: string } 
         table { border-collapse: collapse; width:100%; }
         th,td { border:1px solid #999; padding:6px; }
         hr { border:none; border-top:1px solid #ccc; margin:18px 0; }
+        img { max-width:100%; height:auto; }
       </style></head><body>${html}</body></html>`);
     w.document.close();
     w.focus();
@@ -104,62 +135,74 @@ export default function DocumentEditorPage({ params }: { params: { id: string } 
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      <Link href="/ai-workflows/documents" className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-dark hover:underline">
-        <ArrowLeft size={12} /> Documents
-      </Link>
+    <div className="min-h-[calc(100vh-4rem)] bg-neutral-200/60">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+        <Link href="/ai-workflows/documents" className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-dark hover:underline">
+          <ArrowLeft size={12} /> Documents
+        </Link>
 
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-        <input
-          value={title}
-          onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
-          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent text-2xl font-bold outline-none hover:border-line focus:border-brand focus:bg-white px-1"
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={downloadMd} className="btn-outline text-xs"><Download size={13} /> .md</button>
-          <button onClick={printPdf} className="btn-outline text-xs"><Printer size={13} /> Print / PDF</button>
-          <button onClick={() => setSendOpen(true)} className="btn-outline text-xs"><Send size={13} /> Send to matter</button>
-          <button onClick={save} disabled={saving || !dirty} className="btn-primary text-xs">
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
-          </button>
-        </div>
-      </div>
-
-      <p className="mt-1 text-xs text-muted">
-        {doc.precedent_name ? `From precedent “${doc.precedent_name}”` : 'Document'}
-        {doc.sent_at ? ` · sent to matter ${new Date(doc.sent_at).toLocaleDateString()}` : ''}
-      </p>
-
-      {/* Tabs */}
-      <div className="mt-4 inline-flex rounded-lg border border-line bg-white p-0.5 text-xs font-semibold">
-        <button onClick={() => setTab('edit')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 ${tab === 'edit' ? 'bg-brand-dark text-white' : 'text-muted'}`}>
-          <Pencil size={12} /> Edit
-        </button>
-        <button onClick={() => setTab('preview')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 ${tab === 'preview' ? 'bg-brand-dark text-white' : 'text-muted'}`}>
-          <Eye size={12} /> Preview
-        </button>
-      </div>
-
-      <div className="mt-3">
-        {tab === 'edit' ? (
-          <textarea
-            value={body}
-            onChange={(e) => { setBody(e.target.value); setDirty(true); }}
-            spellCheck
-            className="min-h-[60vh] w-full rounded-xl border border-line bg-white p-4 font-mono text-[13px] leading-relaxed text-ink outline-none focus:border-brand"
-            placeholder="Write your document in Markdown…"
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+          <input
+            value={title}
+            onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
+            className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent text-2xl font-bold outline-none hover:border-line focus:border-brand focus:bg-white px-1"
           />
-        ) : (
-          <div className="rounded-xl border border-line bg-white p-6 shadow-sm">
-            <Markdown>{body || '_Nothing to preview yet._'}</Markdown>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={downloadMd} className="btn-outline text-xs"><Download size={13} /> .md</button>
+            <button onClick={printPdf} className="btn-outline text-xs"><Printer size={13} /> Print / PDF</button>
+            <button onClick={() => setSendOpen(true)} className="btn-outline text-xs"><Send size={13} /> Send to matter</button>
+            <button onClick={save} disabled={saving || !dirty} className="btn-primary text-xs">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+            </button>
           </div>
-        )}
+        </div>
+
+        <p className="mt-1 text-xs text-muted">
+          {doc.precedent_name ? `From precedent “${doc.precedent_name}”` : 'Document'}
+          {doc.sent_at ? ` · sent to matter ${new Date(doc.sent_at).toLocaleDateString()}` : ''}
+        </p>
+
+        {/* Tabs + tools */}
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <div className="inline-flex rounded-lg border border-line bg-white p-0.5 text-xs font-semibold">
+            <button onClick={() => setTab('edit')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 ${tab === 'edit' ? 'bg-brand-dark text-white' : 'text-muted'}`}>
+              <Pencil size={12} /> Edit
+            </button>
+            <button onClick={() => setTab('preview')} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 ${tab === 'preview' ? 'bg-brand-dark text-white' : 'text-muted'}`}>
+              <Eye size={12} /> Preview
+            </button>
+          </div>
+          {tab === 'edit' && (
+            <>
+              <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={(e) => insertImage(e.target.files?.[0])} />
+              <button onClick={() => imgRef.current?.click()} className="btn-outline text-xs"><ImageIcon size={13} /> Insert image</button>
+            </>
+          )}
+        </div>
+
+        {/* The document — a white serif "page" on a grey desk. */}
+        <div className="mt-4 rounded-sm bg-white shadow-md ring-1 ring-black/5">
+          {tab === 'edit' ? (
+            <textarea
+              ref={textareaRef}
+              value={body}
+              onChange={(e) => { setBody(e.target.value); setDirty(true); }}
+              spellCheck
+              className="min-h-[65vh] w-full resize-none rounded-sm bg-white px-8 py-10 font-serif text-[15px] leading-relaxed text-ink outline-none sm:px-14"
+              placeholder="Write your document in Markdown…"
+            />
+          ) : (
+            <div className="px-8 py-10 sm:px-14">
+              <Markdown className="font-serif">{body || '_Nothing to preview yet._'}</Markdown>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Offscreen render used for Print/PDF */}
       <div ref={printRef} className="pointer-events-none absolute -left-[9999px] top-0" aria-hidden>
-        <Markdown>{body}</Markdown>
+        <Markdown className="font-serif">{body}</Markdown>
       </div>
 
       {sendOpen && (

@@ -3,6 +3,15 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+// Allow images (including inline data: images we insert), plus the usual safe
+// schemes. Blocks javascript: and other unsafe protocols.
+function safeUrl(url: string): string {
+  if (url.startsWith('data:image/')) return url;
+  if (/^(https?:|mailto:|tel:|#|\/)/i.test(url)) return url;
+  if (!/:/.test(url)) return url; // relative path
+  return '';
+}
+
 /**
  * Renders Markdown (Claude output, precedent documents) with sensible legal-
  * document styling. No raw HTML is rendered (react-markdown default), so the
@@ -22,7 +31,12 @@ export default function Markdown({
     <div className={`md-body ${sizeClass} leading-relaxed text-ink ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={safeUrl}
         components={{
+          img: (p) => (
+            // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+            <img className="my-3 max-h-[480px] max-w-full rounded-lg border border-line" {...p} />
+          ),
           h1: (p) => <h1 className="mt-5 mb-2 text-center text-lg font-bold uppercase tracking-wide" {...p} />,
           h2: (p) => <h2 className="mt-5 mb-2 text-base font-bold uppercase tracking-wide" {...p} />,
           h3: (p) => <h3 className="mt-4 mb-1.5 text-sm font-bold" {...p} />,
