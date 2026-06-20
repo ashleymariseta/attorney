@@ -444,6 +444,37 @@ class AICreditAccountView(viewsets.ViewSet):
         return Response(AICreditAccountSerializer(account).data)
 
 
+def _notify_admins_of_credit_order(order, *, buyer) -> None:
+    """Email + in-app notify every platform admin that a credit order needs
+    verification. Never raises — a notification failure must not fail the
+    purchase."""
+    from django.contrib.auth import get_user_model
+    from django.db.models import Q
+
+    from core.models import NotificationKind
+    from core.notify import notify
+
+    try:
+        User = get_user_model()
+        admins = User.objects.filter(
+            Q(is_superuser=True) | Q(is_staff=True) | Q(role='admin')
+        ).filter(is_active=True).distinct()
+        buyer_name = buyer.get_full_name() or buyer.email or str(buyer)
+        title = f'AI credit order to verify — {order.token_credits:,} credits'
+        body = (
+            f'{buyer_name} ({order.owner_label}) submitted a proof of payment for '
+            f'{order.amount} {order.currency}'
+            f'{f" ({order.get_method_display() if order.method else order.method})" if order.method else ""}'
+            f'{f", ref {order.reference}" if order.reference else ""}.\n\n'
+            f'Verify it in the admin to grant the credits.'
+        )
+        link = f'/admin/workflows/aicreditorder/{order.pk}/change/'
+        for admin in admins:
+            notify(recipient=admin, kind=NotificationKind.PAYMENT, title=title, body=body, link=link)
+    except Exception:
+        pass
+
+
 class AICreditOrderViewSet(viewsets.ModelViewSet):
     """The lawyer's own credit orders. ``POST`` (multipart) creates a pending
     order with a proof of payment; an admin verifies it to grant credits."""
@@ -495,5 +526,6 @@ class AICreditOrderViewSet(viewsets.ModelViewSet):
             status=CreditOrderStatus.PENDING,
             **owner,
         )
+        _notify_admins_of_credit_order(order, buyer=request.user)
         return Response(AICreditOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
