@@ -9,6 +9,8 @@ from django.conf import settings
 from django.core.validators import FileExtensionValidator
 from django.db import models
 
+from .fields import EncryptedTextField
+
 
 class LLMProvider(models.TextChoices):
     """Concrete provider implementations registered in ``providers.py``."""
@@ -209,7 +211,8 @@ class LLMProviderConfig(models.Model):
     )
     provider = models.CharField(max_length=16, choices=LLMProvider.choices)
     label = models.CharField(max_length=80, blank=True)
-    api_key = models.CharField(max_length=512, blank=True)
+    #: Stored Fernet-encrypted at rest; the attribute reads back as plaintext.
+    api_key = EncryptedTextField(blank=True, default='')
     #: Used by LocalProvider (e.g. http://localhost:11434 for Ollama).
     base_url = models.URLField(blank=True)
     default_model = models.CharField(max_length=80, blank=True)

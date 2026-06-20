@@ -215,6 +215,22 @@ class StageRunApiTests(APITestCase):
         self.assertEqual(res.status_code, 404)  # filtered out by get_queryset
 
 
+class EncryptedKeyTests(APITestCase):
+    def test_api_key_encrypted_at_rest_plaintext_via_orm(self):
+        from django.db import connection
+        cfg = LLMProviderConfig.objects.create(
+            owner=make_lawyer('enc@test.dev'), provider=LLMProvider.ANTHROPIC,
+            api_key='sk-secret-123', default_model='claude-haiku-4-5',
+        )
+        with connection.cursor() as cur:
+            cur.execute('SELECT api_key FROM workflows_llmproviderconfig WHERE id=%s', [cfg.pk])
+            raw = cur.fetchone()[0]
+        self.assertTrue(raw.startswith('enc::'))      # ciphertext at rest
+        self.assertNotIn('sk-secret-123', raw)
+        cfg.refresh_from_db()
+        self.assertEqual(cfg.api_key, 'sk-secret-123')  # transparent decrypt
+
+
 class DocumentApiTests(APITestCase):
     def setUp(self):
         AIPlatformSettings.objects.update_or_create(pk=1, defaults={'free_tier_credits': 0})
