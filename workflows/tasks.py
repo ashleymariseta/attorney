@@ -128,6 +128,7 @@ def run_contract_review_task(review_id, user_id, hold):
         completion = get_provider(config).complete(
             system=CONTRACT_SYSTEM_PROMPT, messages=messages,
             model=config.default_model or None, user_id=_tenant_pseudo_id(user),
+            max_tokens=8192,  # contract analyses are long; avoid truncated JSON
         )
     except ProviderError as e:
         _log_usage(user, config, error=str(e))

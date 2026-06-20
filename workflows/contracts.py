@@ -51,6 +51,46 @@ def _coerce_risk(value) -> str:
     return v if v in RISK_LEVELS else 'medium'
 
 
+def _salvage_truncated(raw: str):
+    """Recover a contract analysis whose JSON was cut off mid-output (the model
+    hit its token limit). Keeps the head fields plus every fully-formed section
+    object, then closes the structure."""
+    idx = raw.find('"sections"')
+    bracket = raw.find('[', idx) if idx != -1 else -1
+    if bracket == -1:
+        return None
+    head = raw[:bracket + 1]  # everything up to and including the '['
+    body = raw[bracket + 1:]
+
+    objs, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(body):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                objs.append(body[start:i + 1])
+                start = None
+    if not objs:
+        return None
+    try:
+        return json.loads(head + ','.join(objs) + ']}')
+    except json.JSONDecodeError:
+        return None
+
+
 def parse_review(text: str) -> dict:
     """Parse Claude's JSON contract analysis defensively. Raises ValueError if
     no usable JSON object is found."""
@@ -59,14 +99,21 @@ def parse_review(text: str) -> dict:
     if raw.startswith('```'):
         raw = re.sub(r'^```(?:json)?\s*', '', raw)
         raw = re.sub(r'\s*```$', '', raw)
-    # Fall back to the first {...} block.
+    # Fall back to the first {...} block, then to salvaging a truncated array.
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        data = None
         m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if not m:
-            raise ValueError('Model did not return JSON.')
-        data = json.loads(m.group(0))
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                data = None
+        if data is None:
+            data = _salvage_truncated(raw)
+        if data is None:
+            raise ValueError('Model did not return parseable JSON.')
 
     sections = []
     for s in (data.get('sections') or []):

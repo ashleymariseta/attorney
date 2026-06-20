@@ -125,7 +125,7 @@ class ClaudeProvider(BaseLLMProvider):
     name = 'anthropic'
     default_model = 'claude-opus-4-7'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
         if not self.config.api_key:
             raise ProviderError('No Anthropic API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -135,7 +135,7 @@ class ClaudeProvider(BaseLLMProvider):
         }
         payload = {
             'model': model,
-            'max_tokens': 4096,
+            'max_tokens': max_tokens,
             'system': system,
             'messages': messages or [{'role': 'user', 'content': user or ''}],
         }
@@ -230,7 +230,7 @@ class OpenAIProvider(BaseLLMProvider):
     name = 'openai'
     default_model = 'gpt-4o'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
         if not self.config.api_key:
             raise ProviderError('No OpenAI API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -240,6 +240,7 @@ class OpenAIProvider(BaseLLMProvider):
         payload = {
             'model': model,
             'messages': chat,
+            'max_tokens': max_tokens,
             'temperature': 0.2,
         }
         if user_id:
@@ -275,10 +276,10 @@ class LocalProvider(BaseLLMProvider):
     name = 'local'
     default_model = 'llama3.1'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
         # user_id intentionally unused — self-hosted endpoints typically
         # don't need provider-side attribution and many ignore extra fields.
-        del user_id
+        del user_id, max_tokens
         if not self.config.base_url:
             raise ProviderError('No base URL configured for the local provider.')
         model = model or self.config.default_model or self.default_model

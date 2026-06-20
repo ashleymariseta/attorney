@@ -294,3 +294,19 @@ class ContractParseTests(APITestCase):
         from workflows.contracts import parse_review
         with self.assertRaises(ValueError):
             parse_review('I could not analyse this.')
+
+    def test_parse_review_salvages_truncated_json(self):
+        from workflows.contracts import parse_review
+        # JSON cut off mid-way through the 3rd section (token limit hit).
+        truncated = (
+            '{"title":"Lease","overall_risk":"high","summary":"s","parties":["L","T"],'
+            '"sections":['
+            '{"heading":"Rent","risk":"high","summary":"a","excerpt":"x","issues":[]},'
+            '{"heading":"Repairs","risk":"medium","summary":"b","excerpt":"y","issues":[]},'
+            '{"heading":"Termination","risk":"hig'  # <- truncated here
+        )
+        out = parse_review(truncated)
+        # The two complete sections are recovered.
+        self.assertEqual(len(out['sections']), 2)
+        self.assertEqual(out['sections'][0]['heading'], 'Rent')
+        self.assertEqual(out['overall_risk'], 'high')
