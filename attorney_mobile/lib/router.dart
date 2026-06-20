@@ -73,6 +73,11 @@ class Routes {
   static const adminLlmUsage = '/admin/llm-usage';
 }
 
+/// AI Workflows is web-only for now. While false, the mobile app hides all
+/// entry points and redirects any /ai-workflows* deep link to the dashboard.
+/// Flip to true to re-enable on mobile.
+const bool kAiWorkflowsEnabled = false;
+
 final _publicRoutes = <String>{
   Routes.splash,
   Routes.landing,
@@ -108,6 +113,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (status == AuthStatus.unknown) {
         // Wait for the splash effect to finish bootstrapping.
         return going == Routes.splash ? null : Routes.splash;
+      }
+      // AI Workflows is hidden on mobile for now — block any deep link.
+      if (!kAiWorkflowsEnabled && going.startsWith('/ai-workflows')) {
+        return Routes.dashboard;
       }
       // Once auth resolves, leave the splash route regardless of branch.
       if (going == Routes.splash) {
