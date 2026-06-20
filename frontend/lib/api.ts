@@ -961,6 +961,7 @@ export const coResearcher = {
       question: string;
       scope?: CorpusKind[];
       conversation_id?: number | null;
+      include_matters?: boolean;
       attachments?: { name: string; media_type: string; data: string }[];
     },
     handlers: {

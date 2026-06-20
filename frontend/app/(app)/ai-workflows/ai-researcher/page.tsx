@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, BookText, Check, Copy, Download, FileDown, FileText, Loader2, MessageSquare,
-  PanelRightClose, PanelRightOpen, Paperclip, Plus, Send, ShieldCheck, Sparkles, Trash2,
-  User as UserIcon, X,
+  ArrowLeft, BookText, Check, Copy, Download, FileDown, FileText, FolderOpen, Loader2,
+  MessageSquare, PanelRightClose, PanelRightOpen, Paperclip, Plus, Send, ShieldCheck,
+  Sparkles, Trash2, User as UserIcon, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -75,6 +75,7 @@ export default function CoResearcherPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [scope, setScope] = useState<CorpusKind[]>([]);
+  const [myMatters, setMyMatters] = useState(false);
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
@@ -179,7 +180,7 @@ export default function CoResearcherPage() {
 
     try {
       await coResearcher.askStream(
-        { question, scope, conversation_id: currentId, attachments: attached },
+        { question, scope, conversation_id: currentId, include_matters: myMatters, attachments: attached },
         {
           onDelta: (t) => setAssistant((prev) => prev + t),
           onDone: (conv) => {
@@ -255,7 +256,13 @@ export default function CoResearcherPage() {
 
         {/* Composer */}
         <div className="sticky bottom-0 mt-2 bg-canvas/80 pb-2 pt-2 backdrop-blur">
-          <ScopeBar scope={scope} onToggle={(k) => setScope((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]))} onClear={() => setScope([])} />
+          <ScopeBar
+            scope={scope}
+            onToggle={(k) => setScope((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]))}
+            onClear={() => setScope([])}
+            myMatters={myMatters}
+            onToggleMatters={() => setMyMatters((v) => !v)}
+          />
 
           {files.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -397,7 +404,15 @@ function AnswerToolbar({ content, onSaveDoc }: { content: string; onSaveDoc: (co
   );
 }
 
-function ScopeBar({ scope, onToggle, onClear }: { scope: CorpusKind[]; onToggle: (k: CorpusKind) => void; onClear: () => void }) {
+function ScopeBar({
+  scope, onToggle, onClear, myMatters, onToggleMatters,
+}: {
+  scope: CorpusKind[];
+  onToggle: (k: CorpusKind) => void;
+  onClear: () => void;
+  myMatters: boolean;
+  onToggleMatters: () => void;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Scope</span>
@@ -419,6 +434,14 @@ function ScopeBar({ scope, onToggle, onClear }: { scope: CorpusKind[]; onToggle:
           </button>
         );
       })}
+      <span className="mx-0.5 h-4 w-px bg-line" />
+      <button
+        onClick={onToggleMatters}
+        title="Include your client matters as context"
+        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${myMatters ? 'bg-brand-dark text-white' : 'border border-line bg-white text-muted hover:border-brand'}`}
+      >
+        <FolderOpen size={11} /> My matters
+      </button>
     </div>
   );
 }

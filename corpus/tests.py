@@ -73,6 +73,19 @@ class StreamAskTests(APITestCase):
         conv.refresh_from_db()
         self.assertEqual(len(conv.messages), 4)  # two turns
 
+    def test_my_matters_context_grounds_prompt(self):
+        from core.models import Matter
+        from corpus.views import _matters_context, _system_prompt
+        Matter.objects.create(title='Doe v Acme', client=self.user, practice_area='Litigation',
+                              description='Breach of supply agreement.')
+        ctx = _matters_context(self.user)
+        self.assertIn('Doe v Acme', ctx)
+        prompt = _system_prompt(['statute'], ctx)
+        self.assertIn('Doe v Acme', prompt)
+        self.assertIn('Statutes', prompt)
+        # Without matters context the prompt stays clean.
+        self.assertNotIn('Doe v Acme', _system_prompt(['statute']))
+
     def test_content_blocks_builds_for_each_type(self):
         import base64
         from corpus.views import _content_blocks, AttachmentError

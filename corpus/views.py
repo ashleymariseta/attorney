@@ -54,14 +54,49 @@ def _is_lawyer(user):
     return getattr(user, 'role', None) == 'lawyer'
 
 
-def _system_prompt(scope):
+def _system_prompt(scope, matters_context=None):
+    prompt = LEGAL_SYSTEM_PROMPT
     labels = [_SCOPE_LABELS[s] for s in (scope or []) if s in _SCOPE_LABELS]
-    if not labels:
-        return LEGAL_SYSTEM_PROMPT
-    return LEGAL_SYSTEM_PROMPT + (
-        f"\n\nFocus this answer on the following Zimbabwean sources where relevant: "
-        f"{', '.join(labels)}."
+    if labels:
+        prompt += (
+            f"\n\nFocus this answer on the following Zimbabwean sources where relevant: "
+            f"{', '.join(labels)}."
+        )
+    if matters_context:
+        prompt += (
+            "\n\nThe practitioner may ask about their own caseload. Here are their "
+            "current matters — use them only when relevant and never invent matter "
+            f"details:\n\n{matters_context}"
+        )
+    return prompt
+
+
+def _matters_context(user, limit=25):
+    """A compact Markdown summary of the matters this lawyer can see (their own
+    plus firm-shared), for grounding 'about my matters' questions."""
+    from django.db.models import Q
+
+    from core.models import Matter
+
+    scope = Q(client=user) | Q(lawyers=user)
+    firm_id = getattr(getattr(user, 'lawyer_profile', None), 'firm_id', None)
+    if firm_id:
+        scope |= Q(lawyers__lawyer_profile__firm_id=firm_id)
+    qs = (
+        Matter.objects.filter(scope).select_related('client')
+        .prefetch_related('lawyers').distinct().order_by('-created_at')[:limit]
     )
+    lines = []
+    for m in qs:
+        client = (m.client.get_full_name() if m.client_id else '') or getattr(m.client, 'email', '')
+        lines.append(
+            f"- **{m.title}** — status: {m.get_status_display()}; "
+            f"area: {m.practice_area or 'n/a'}; client: {client or 'n/a'}"
+            + (f". {m.description[:300]}" if m.description else '')
+        )
+    if not lines:
+        return 'The practitioner has no matters on file.'
+    return '\n'.join(lines)
 
 
 def _build_messages(question, history, content=None):
@@ -174,9 +209,10 @@ class CoResearcherAskView(APIView):
             return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         messages = _build_messages(data['question'], request.data.get('history'))
+        matters_ctx = _matters_context(request.user) if request.data.get('include_matters') else None
         try:
             completion = get_provider(config).complete(
-                system=_system_prompt(data.get('scope')), messages=messages,
+                system=_system_prompt(data.get('scope'), matters_ctx), messages=messages,
                 model=config.default_model or None, user_id=_tenant_pseudo_id(request.user),
             )
         except ProviderError as e:
@@ -220,6 +256,7 @@ class CoResearcherStreamView(APIView):
         conversation_id = request.data.get('conversation_id')
         attachments = request.data.get('attachments') or []
         user = request.user
+        matters_ctx = _matters_context(user) if request.data.get('include_matters') else None
 
         # Build the user message content (text + any file blocks) up-front so a
         # bad attachment fails fast with a 400 rather than mid-stream.
@@ -262,7 +299,7 @@ class CoResearcherStreamView(APIView):
             settled = False
             try:
                 for evt in adapter.stream(
-                    system=_system_prompt(data.get('scope')), messages=messages,
+                    system=_system_prompt(data.get('scope'), matters_ctx), messages=messages,
                     model=config.default_model or None, user_id=_tenant_pseudo_id(user),
                 ):
                     if evt['type'] == 'delta':
