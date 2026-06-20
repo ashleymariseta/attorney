@@ -7,6 +7,7 @@ from .models import (
     AICreditPlan,
     AICreditTransaction,
     AIPlatformSettings,
+    ContractReview,
     CreditOrderStatus,
     LLMProviderConfig,
     LLMUsageLog,
@@ -264,3 +265,11 @@ class WorkflowDocumentAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('title', 'owner__email')
     readonly_fields = ('sent_matter', 'sent_document', 'sent_at', 'created_at', 'updated_at')
+
+
+@admin.register(ContractReview)
+class ContractReviewAdmin(admin.ModelAdmin):
+    list_display = ('title', 'owner', 'status', 'overall_risk', 'created_at')
+    list_filter = ('status', 'overall_risk')
+    search_fields = ('title', 'owner__email')
+    readonly_fields = ('result', 'tokens_in', 'tokens_out', 'created_at', 'updated_at')

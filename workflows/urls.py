@@ -4,6 +4,7 @@ from .views import (
     AICreditAccountView,
     AICreditOrderViewSet,
     AICreditPlanViewSet,
+    ContractReviewViewSet,
     LLMUsageAdminView,
     PrecedentTemplateViewSet,
     WorkflowDocumentViewSet,
@@ -23,5 +24,6 @@ router.register(r'ai-credit-orders', AICreditOrderViewSet, basename='ai-credit-o
 router.register(r'ai-credit-account', AICreditAccountView, basename='ai-credit-account')
 router.register(r'precedents', PrecedentTemplateViewSet, basename='precedent')
 router.register(r'workflow-documents', WorkflowDocumentViewSet, basename='workflow-document')
+router.register(r'contract-reviews', ContractReviewViewSet, basename='contract-review')
 
 urlpatterns = router.urls

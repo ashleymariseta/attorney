@@ -274,3 +274,23 @@ class DocumentApiTests(APITestCase):
         res = self.client.post(f'/api/v1/workflow-documents/{doc_id}/send-to-matter/', {'matter': matter.id}, format='json')
         self.assertEqual(res.status_code, 200, res.content)
         self.assertEqual(matter.documents.filter(kind='draft').count(), 1)
+
+
+class ContractParseTests(APITestCase):
+    def test_parse_review_handles_fenced_json_and_coerces(self):
+        from workflows.contracts import parse_review
+        raw = '```json\n' + (
+            '{"title":"NDA","overall_risk":"HIGH","summary":"x","parties":["A","B"],'
+            '"sections":[{"heading":"Term","risk":"weird","summary":"s","excerpt":"e",'
+            '"issues":[{"severity":"high","issue":"i","recommendation":"r"}]}]}'
+        ) + '\n```'
+        out = parse_review(raw)
+        self.assertEqual(out['overall_risk'], 'high')
+        self.assertEqual(out['sections'][0]['risk'], 'medium')  # invalid → medium
+        self.assertEqual(out['sections'][0]['issues'][0]['severity'], 'high')
+        self.assertEqual(out['parties'], ['A', 'B'])
+
+    def test_parse_review_rejects_non_json(self):
+        from workflows.contracts import parse_review
+        with self.assertRaises(ValueError):
+            parse_review('I could not analyse this.')

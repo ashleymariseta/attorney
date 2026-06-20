@@ -1279,6 +1279,75 @@ export const workflowDocuments = {
   },
 };
 
+// ---- Contract review ----
+
+export type RiskLevel = 'high' | 'medium' | 'low';
+
+export interface ContractIssue {
+  severity: RiskLevel;
+  issue: string;
+  recommendation: string;
+}
+
+export interface ContractSection {
+  heading: string;
+  risk: RiskLevel;
+  summary: string;
+  excerpt: string;
+  issues: ContractIssue[];
+}
+
+export interface ContractResult {
+  title: string;
+  overall_risk: RiskLevel;
+  summary: string;
+  parties: string[];
+  sections: ContractSection[];
+}
+
+export interface ContractReview {
+  id: number;
+  title: string;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  status_display: string;
+  overall_risk: RiskLevel | '';
+  summary: string;
+  result: ContractResult | Record<string, never>;
+  error: string;
+  tokens_in: number;
+  tokens_out: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractReviewListItem {
+  id: number;
+  title: string;
+  status: ContractReview['status'];
+  status_display: string;
+  overall_risk: RiskLevel | '';
+  section_count: number;
+  created_at: string;
+}
+
+export const contractReviews = {
+  list() {
+    return api<Paginated<ContractReviewListItem>>('/api/v1/contract-reviews/');
+  },
+  get(id: number) {
+    return api<ContractReview>(`/api/v1/contract-reviews/${id}/`);
+  },
+  create(file: File, title?: string) {
+    const form = new FormData();
+    form.append('file', file);
+    if (title) form.append('title', title);
+    return api<ContractReview>('/api/v1/contract-reviews/', { method: 'POST', body: form });
+  },
+  remove(id: number) {
+    return api<void>(`/api/v1/contract-reviews/${id}/`, { method: 'DELETE' });
+  },
+};
+
 export const workflows = {
   templates() {
     return api<Paginated<WorkflowTemplate>>('/api/v1/workflow-templates/');

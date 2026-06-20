@@ -15,6 +15,8 @@ from .models import (
     AICreditOrder,
     AICreditPlan,
     AIPlatformSettings,
+    ContractReview,
+    ContractReviewStatus,
     CreditOrderStatus,
     LLMProvider,
     LLMProviderConfig,
@@ -35,6 +37,8 @@ from .serializers import (
     AICreditOrderCreateSerializer,
     AICreditOrderSerializer,
     AICreditPlanSerializer,
+    ContractReviewListSerializer,
+    ContractReviewSerializer,
     PrecedentTemplateListSerializer,
     PrecedentTemplateSerializer,
     StageResultSerializer,
@@ -631,3 +635,63 @@ class WorkflowDocumentViewSet(viewsets.ModelViewSet):
         doc.save(update_fields=['sent_matter', 'sent_document', 'sent_at', 'updated_at'])
         return Response(WorkflowDocumentSerializer(doc).data)
 
+
+
+class ContractReviewViewSet(viewsets.ModelViewSet):
+    """Upload a contract; Claude analyses it into a risk-rated, sectioned report.
+    The provider call runs in a Celery worker (eager in dev)."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    queryset = ContractReview.objects.none()
+
+    def get_serializer_class(self):
+        return ContractReviewListSerializer if self.action == 'list' else ContractReviewSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return ContractReview.objects.none()
+        return ContractReview.objects.filter(owner=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        if not _is_lawyer(request.user):
+            return Response({'detail': 'Contract review is available to practitioners.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        upload = request.FILES.get('file')
+        if upload is None:
+            return Response({'detail': 'Attach a contract file (PDF, image or text).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > 15 * 1024 * 1024:
+            return Response({'detail': 'File too large (max 15 MB).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        config = _pick_provider_config()
+        if config is None:
+            return Response({'detail': 'No AI provider has been configured by the administrator yet.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        review = ContractReview.objects.create(
+            owner=request.user, title=(request.data.get('title') or '').strip()[:300],
+            file=upload, status=ContractReviewStatus.PENDING,
+        )
+        try:
+            hold = credits.begin_charge(request.user)
+        except InsufficientCreditsError as c:
+            review.delete()
+            return Response({'detail': str(c)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+        try:
+            _enforce_pool_limits(request.user)
+        except QuotaError as q:
+            credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
+            review.delete()
+            return Response({'detail': str(q)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        review.status = ContractReviewStatus.PROCESSING
+        review.save(update_fields=['status'])
+
+        from .tasks import run_contract_review_task
+        run_contract_review_task.delay(review.id, request.user.id, hold)
+
+        review.refresh_from_db()
+        return Response(ContractReviewSerializer(review).data, status=status.HTTP_202_ACCEPTED)

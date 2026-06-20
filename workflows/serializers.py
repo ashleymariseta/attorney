@@ -7,6 +7,7 @@ from .models import (
     AICreditPlan,
     AICreditTransaction,
     AIPlatformSettings,
+    ContractReview,
     LLMProvider,
     LLMProviderConfig,
     PrecedentTemplate,
@@ -279,3 +280,31 @@ class WorkflowDocumentCreateSerializer(serializers.Serializer):
     workflow = serializers.PrimaryKeyRelatedField(
         queryset=Workflow.objects.all(), required=False, allow_null=True
     )
+
+
+class ContractReviewSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = ContractReview
+        fields = [
+            'id', 'title', 'status', 'status_display', 'overall_risk', 'summary',
+            'result', 'error', 'tokens_in', 'tokens_out', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class ContractReviewListSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    section_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ContractReview
+        fields = [
+            'id', 'title', 'status', 'status_display', 'overall_risk',
+            'section_count', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_section_count(self, obj):
+        return len((obj.result or {}).get('sections', []))

@@ -577,3 +577,50 @@ class WorkflowDocument(models.Model):
 
     def __str__(self):
         return self.title
+
+
+# ---------------------------------------------------------------------------
+# Contract review — upload a contract, Claude analyses it into risk-rated
+# sections (a "heat map") with per-clause issues and recommendations.
+# ---------------------------------------------------------------------------
+
+class ContractReviewStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    PROCESSING = 'processing', 'Processing'
+    DONE = 'done', 'Done'
+    ERROR = 'error', 'Error'
+
+
+def contract_path(instance, filename):
+    return f'contract_reviews/user_{instance.owner_id}/{filename}'
+
+
+class ContractReview(models.Model):
+    """An AI risk review of an uploaded contract."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='contract_reviews'
+    )
+    title = models.CharField(max_length=300, blank=True)
+    file = models.FileField(
+        upload_to=contract_path, null=True, blank=True,
+        validators=[FileExtensionValidator(['pdf', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp'])],
+    )
+    status = models.CharField(
+        max_length=16, choices=ContractReviewStatus.choices, default=ContractReviewStatus.PENDING
+    )
+    overall_risk = models.CharField(max_length=10, blank=True)  # high | medium | low
+    summary = models.TextField(blank=True)
+    #: Full structured analysis: {title, overall_risk, summary, parties[], sections[]}.
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    tokens_in = models.PositiveIntegerField(default=0)
+    tokens_out = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title or f'Contract review {self.pk}'
