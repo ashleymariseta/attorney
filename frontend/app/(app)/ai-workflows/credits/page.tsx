@@ -68,13 +68,31 @@ export default function AiCreditsPage() {
         <>
           {/* Balance */}
           <div className="mt-6 rounded-2xl border border-line bg-gradient-to-br from-brand-dark to-brand p-5 text-white shadow-sm">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/80">
-              <Coins size={14} /> Credit balance
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/80">
+                <Coins size={14} /> Credit balance
+              </div>
+              {account?.is_free_tier ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                  Free tier
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                  <Check size={11} /> Paid plan
+                </span>
+              )}
             </div>
             <div className="mt-1 text-3xl font-bold">{fmt(account?.balance ?? 0)}<span className="ml-1 text-base font-medium text-white/80">credits</span></div>
             <p className="mt-1 text-xs text-white/80">
               {account?.owner_label} · {fmt(account?.lifetime_granted ?? 0)} granted · {fmt(account?.lifetime_spent ?? 0)} spent
             </p>
+            {account?.is_free_tier && (
+              <p className="mt-2 text-xs text-white/90">
+                You&rsquo;re on the <strong>free tier</strong>
+                {(account?.free_tier_credits ?? 0) > 0 ? ` (${fmt(account.free_tier_credits)} free credits)` : ''}.
+                Buy a pack below to top up.
+              </p>
+            )}
           </div>
 
           {/* Plans */}

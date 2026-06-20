@@ -239,6 +239,11 @@ class AIPlatformSettings(models.Model):
     weekly_token_quota = models.PositiveIntegerField(default=60_000)
     monthly_token_quota = models.PositiveIntegerField(default=200_000)
     rate_limit_per_minute = models.PositiveIntegerField(default=20)
+    free_tier_credits = models.PositiveIntegerField(
+        default=10_000,
+        help_text='AI credits granted once, for free, to every new lawyer/firm account '
+                  'before they buy a plan. Set to 0 to disable the free tier.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -327,6 +332,9 @@ class AICreditAccount(models.Model):
     )
     balance = models.BigIntegerField(
         default=0, help_text='Current AI token balance. May dip slightly negative if a call overshoots.'
+    )
+    free_tier_granted = models.BooleanField(
+        default=False, help_text='Whether the one-time free-tier credits have been granted to this account.'
     )
     lifetime_granted = models.PositiveBigIntegerField(default=0)
     lifetime_spent = models.PositiveBigIntegerField(default=0)

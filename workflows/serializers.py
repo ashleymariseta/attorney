@@ -1,10 +1,12 @@
 from rest_framework import serializers
 
+from . import credits
 from .models import (
     AICreditAccount,
     AICreditOrder,
     AICreditPlan,
     AICreditTransaction,
+    AIPlatformSettings,
     LLMProvider,
     LLMProviderConfig,
     StageResult,
@@ -162,11 +164,15 @@ class AICreditTransactionSerializer(serializers.ModelSerializer):
 class AICreditAccountSerializer(serializers.ModelSerializer):
     owner_label = serializers.CharField(read_only=True)
     transactions = serializers.SerializerMethodField()
+    is_free_tier = serializers.SerializerMethodField()
+    plan_status = serializers.SerializerMethodField()
+    free_tier_credits = serializers.SerializerMethodField()
 
     class Meta:
         model = AICreditAccount
         fields = [
             'owner_label', 'balance', 'lifetime_granted', 'lifetime_spent',
+            'is_free_tier', 'plan_status', 'free_tier_credits',
             'updated_at', 'transactions',
         ]
         read_only_fields = fields
@@ -174,6 +180,15 @@ class AICreditAccountSerializer(serializers.ModelSerializer):
     def get_transactions(self, obj):
         recent = obj.transactions.all()[:25]
         return AICreditTransactionSerializer(recent, many=True).data
+
+    def get_is_free_tier(self, obj):
+        return not credits.is_on_paid_plan(obj)
+
+    def get_plan_status(self, obj):
+        return 'paid' if credits.is_on_paid_plan(obj) else 'free'
+
+    def get_free_tier_credits(self, obj):
+        return AIPlatformSettings.load().free_tier_credits
 
 
 class AICreditOrderSerializer(serializers.ModelSerializer):

@@ -45,16 +45,46 @@ def resolve_account(*, user=None, firm=None):
     * ``firm`` given → that firm's account.
     * ``user`` given → their firm's account if they belong to one, else their
       own personal account.
+
+    Newly relevant accounts receive their one-time free-tier credits here.
     """
     if firm is None and user is not None:
         firm = _firm_for(user)
     if firm is not None:
         account, _ = AICreditAccount.objects.get_or_create(owner_firm=firm)
-        return account
-    if user is not None:
+    elif user is not None:
         account, _ = AICreditAccount.objects.get_or_create(owner_user=user)
-        return account
-    raise ValueError('resolve_account requires user or firm')
+    else:
+        raise ValueError('resolve_account requires user or firm')
+    _ensure_free_tier(account)
+    account.refresh_from_db()
+    return account
+
+
+def _ensure_free_tier(account) -> None:
+    """Grant the configured free-tier credits to an account exactly once."""
+    from .models import AIPlatformSettings, CreditTxnKind
+
+    if account.free_tier_granted:
+        return
+    amount = AIPlatformSettings.load().free_tier_credits
+    if amount and amount > 0:
+        grant_credits(account, amount, kind=CreditTxnKind.GRANT, note='Free tier')
+    # Mark granted even when the amount is 0 so we don't retry on every call.
+    account.free_tier_granted = True
+    account.save(update_fields=['free_tier_granted', 'updated_at'])
+
+
+def is_on_paid_plan(account) -> bool:
+    """True once the account has at least one verified (paid) credit order."""
+    from .models import AICreditOrder, CreditOrderStatus
+
+    qs = AICreditOrder.objects.filter(status=CreditOrderStatus.VERIFIED)
+    if account.owner_firm_id:
+        return qs.filter(owner_firm_id=account.owner_firm_id).exists()
+    if account.owner_user_id:
+        return qs.filter(owner_user_id=account.owner_user_id).exists()
+    return False
 
 
 def balance_for(user) -> int:

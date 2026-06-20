@@ -1059,6 +1059,9 @@ export interface AiCreditAccount {
   balance: number;
   lifetime_granted: number;
   lifetime_spent: number;
+  is_free_tier: boolean;
+  plan_status: 'free' | 'paid';
+  free_tier_credits: number;
   updated_at: string;
   transactions: AiCreditTransaction[];
 }

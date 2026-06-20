@@ -112,7 +112,7 @@ class AIPlatformSettingsAdmin(admin.ModelAdmin):
 
     list_display = (
         'daily_token_quota', 'weekly_token_quota', 'monthly_token_quota',
-        'rate_limit_per_minute', 'updated_at',
+        'rate_limit_per_minute', 'free_tier_credits', 'updated_at',
     )
 
     def has_add_permission(self, request):
@@ -153,9 +153,9 @@ class AICreditAccountAdmin(admin.ModelAdmin):
     ledger — adjust it by adding an order or via the 'adjust' action, not by
     editing this row."""
 
-    list_display = ('owner_label', 'balance', 'lifetime_granted', 'lifetime_spent', 'updated_at')
+    list_display = ('owner_label', 'balance', 'free_tier_granted', 'lifetime_granted', 'lifetime_spent', 'updated_at')
     search_fields = ('owner_user__email', 'owner_firm__name')
-    readonly_fields = ('balance', 'lifetime_granted', 'lifetime_spent', 'created_at', 'updated_at')
+    readonly_fields = ('balance', 'free_tier_granted', 'lifetime_granted', 'lifetime_spent', 'created_at', 'updated_at')
     inlines = [AICreditTransactionInline]
 
     @admin.display(description='Account')

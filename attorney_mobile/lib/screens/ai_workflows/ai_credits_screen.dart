@@ -86,6 +86,8 @@ class _AiCreditsScreenState extends ConsumerState<AiCreditsScreen> {
                   ownerLabel: (account['owner_label'] as String?) ?? '',
                   granted: (account['lifetime_granted'] as num?) ?? 0,
                   spent: (account['lifetime_spent'] as num?) ?? 0,
+                  isFreeTier: (account['is_free_tier'] as bool?) ?? false,
+                  freeTierCredits: (account['free_tier_credits'] as num?) ?? 0,
                   fmt: _fmt,
                 ),
                 const SizedBox(height: 20),
@@ -161,12 +163,16 @@ class _BalanceCard extends StatelessWidget {
     required this.ownerLabel,
     required this.granted,
     required this.spent,
+    required this.isFreeTier,
+    required this.freeTierCredits,
     required this.fmt,
   });
   final num balance;
   final String ownerLabel;
   final num granted;
   final num spent;
+  final bool isFreeTier;
+  final num freeTierCredits;
   final String Function(num) fmt;
 
   @override
@@ -184,18 +190,47 @@ class _BalanceCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(children: [
-            Icon(LucideIcons.coins, color: Colors.white70, size: 14),
-            SizedBox(width: 6),
-            Text('CREDIT BALANCE',
-                style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-          ]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(children: [
+                Icon(LucideIcons.coins, color: Colors.white70, size: 14),
+                SizedBox(width: 6),
+                Text('CREDIT BALANCE',
+                    style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+              ]),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (!isFreeTier) ...[
+                    const Icon(LucideIcons.check, color: Colors.white, size: 11),
+                    const SizedBox(width: 3),
+                  ],
+                  Text(isFreeTier ? 'Free tier' : 'Paid plan',
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ],
+          ),
           const SizedBox(height: 6),
           Text('${fmt(balance)} credits',
               style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           Text('$ownerLabel · ${fmt(granted)} granted · ${fmt(spent)} spent',
               style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          if (isFreeTier) ...[
+            const SizedBox(height: 6),
+            Text(
+              freeTierCredits > 0
+                  ? 'You’re on the free tier (${fmt(freeTierCredits)} free credits). Buy a pack to top up.'
+                  : 'You’re on the free tier. Buy a pack to top up.',
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ],
         ],
       ),
     );
