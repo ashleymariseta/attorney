@@ -516,6 +516,7 @@ class AICreditOrderViewSet(viewsets.ModelViewSet):
 
         order = AICreditOrder.objects.create(
             plan=plan,
+            created_by=request.user,
             token_credits=plan.token_credits,
             amount=plan.price,
             currency=plan.currency,

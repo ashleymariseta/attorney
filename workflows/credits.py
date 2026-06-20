@@ -116,6 +116,49 @@ def charge_usage(user, completion=None, *, usage_log=None, note='') -> None:
     debit_credits(resolve_account(user=user), tokens, usage_log=usage_log, note=note)
 
 
+def _order_recipients(order):
+    """Who to tell about an order's outcome: the submitting lawyer, the
+    personal owner, and (for firm orders) the firm's admin."""
+    seen = set()
+    out = []
+    for user in (
+        getattr(order, 'created_by', None),
+        getattr(order, 'owner_user', None),
+        getattr(getattr(order, 'owner_firm', None), 'admin', None),
+    ):
+        if user is not None and user.pk not in seen:
+            seen.add(user.pk)
+            out.append(user)
+    return out
+
+
+def notify_order_outcome(order, *, verified, reason=''):
+    """Email + in-app notify the lawyer that their credit order was verified
+    or rejected. Never raises."""
+    from core.models import NotificationKind
+    from core.notify import notify
+
+    try:
+        if verified:
+            title = f'AI credits unlocked — {order.token_credits:,} credits'
+            body = (
+                f'Your payment was verified and {order.token_credits:,} AI credits have been '
+                f'added to {order.owner_label.split(": ", 1)[-1]}. They\'re ready to use in '
+                f'AI Workflows and AI-Researcher.'
+            )
+        else:
+            title = 'AI credit payment rejected'
+            body = 'Your AI credit proof of payment was not accepted.'
+            if reason:
+                body += f'\n\nReason: {reason}'
+            body += '\n\nPlease check the details and submit a new proof of payment.'
+        link = '/ai-workflows/credits'
+        for user in _order_recipients(order):
+            notify(recipient=user, kind=NotificationKind.PAYMENT, title=title, body=body, link=link)
+    except Exception:
+        pass
+
+
 @transaction.atomic
 def verify_order(order, *, reviewer, note='') -> AICreditTransaction:
     """Approve a pending credit order: grant its credits to the resolved
@@ -133,6 +176,7 @@ def verify_order(order, *, reviewer, note='') -> AICreditTransaction:
     order.reviewed_at = timezone.now()
     order.review_note = note
     order.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+    transaction.on_commit(lambda: notify_order_outcome(order, verified=True))
     return txn
 
 
@@ -147,3 +191,4 @@ def reject_order(order, *, reviewer, note='') -> None:
     order.reviewed_at = timezone.now()
     order.review_note = note
     order.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+    transaction.on_commit(lambda: notify_order_outcome(order, verified=False, reason=note))

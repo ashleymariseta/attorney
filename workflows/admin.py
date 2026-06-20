@@ -170,12 +170,12 @@ class AICreditOrderAdmin(admin.ModelAdmin):
 
     list_display = (
         'created_at', 'owner_label', 'plan', 'token_credits', 'amount', 'currency',
-        'status', 'reviewed_by',
+        'status', 'created_by', 'reviewed_by',
     )
     list_filter = ('status', 'currency', 'method')
-    search_fields = ('owner_user__email', 'owner_firm__name', 'reference')
+    search_fields = ('owner_user__email', 'owner_firm__name', 'created_by__email', 'reference')
     autocomplete_fields = ()
-    readonly_fields = ('reviewed_by', 'reviewed_at', 'created_at', 'updated_at')
+    readonly_fields = ('created_by', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at')
     actions = ('verify_and_grant', 'reject_orders')
 
     @admin.display(description='Account')

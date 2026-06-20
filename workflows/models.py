@@ -384,6 +384,11 @@ class AICreditOrder(models.Model):
     plan = models.ForeignKey(
         AICreditPlan, null=True, blank=True, on_delete=models.SET_NULL, related_name='orders'
     )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='submitted_ai_credit_orders',
+        help_text='The lawyer who submitted this order (notified on verify/reject).',
+    )
     token_credits = models.PositiveBigIntegerField(
         help_text='Credits granted on verification. Defaults from the plan; override for ad-hoc grants.'
     )
