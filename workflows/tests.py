@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from core.models import Firm, LawyerProfile, Matter
@@ -171,6 +172,7 @@ class QuotaTests(APITestCase):
         _enforce_pool_limits(self.lawyer)  # no token cap
 
 
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class StageRunApiTests(APITestCase):
     def setUp(self):
         AIPlatformSettings.objects.update_or_create(pk=1, defaults={'free_tier_credits': 10_000})
@@ -188,16 +190,17 @@ class StageRunApiTests(APITestCase):
     def _run_url(self, stage):
         return f'/api/v1/workflow-stages/{stage.id}/run/'
 
-    @patch('workflows.views.get_provider', lambda config: fake_adapter())
+    @patch('workflows.providers.get_provider', lambda config: fake_adapter())
     def test_run_succeeds_and_settles_actual_tokens(self):
         self.client.force_authenticate(self.lawyer)
         res = self.client.post(self._run_url(self.stage), {}, format='json')
-        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(res.status_code, 202, res.content)  # async accepted
+        # Eager task ran inline → result persisted + hold reconciled.
         self.assertEqual(StageResult.objects.filter(stage=self.stage).count(), 1)
         # 10000 free - 150 actual tokens = 9850 (hold fully reconciled).
         self.assertEqual(credits.balance_for(self.lawyer), 9850)
 
-    @patch('workflows.views.get_provider', lambda config: fake_adapter())
+    @patch('workflows.providers.get_provider', lambda config: fake_adapter())
     def test_run_blocked_without_credits(self):
         # Drain the free tier.
         credits.begin_charge(self.lawyer, estimate=10_000)

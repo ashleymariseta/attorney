@@ -73,12 +73,28 @@ export default function WorkflowDetailPage({ params }: { params: { id: string } 
   async function run(stage: WorkflowStageData) {
     setBusy(stage.id);
     try {
+      // The run is accepted (202) and executed asynchronously on the server;
+      // poll the workflow until this stage leaves the in_progress state.
       await workflowStages.run(stage.id, {
         system_prompt: stage.purpose,
         user_prompt: stage.prompt_template,
       });
-      await reload();
-      toast.success(`${stage.title} run complete — review the result.`, { major: true });
+      let finished = false;
+      for (let i = 0; i < 45 && !finished; i++) {
+        const data = await workflows.get(id);
+        setWf(data);
+        const s = data.stages.find((x) => x.id === stage.id);
+        if (!s || s.status !== 'in_progress') {
+          finished = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (finished) {
+        toast.success(`${stage.title} run complete — review the result.`, { major: true });
+      } else {
+        toast.info('Still running — it’ll appear here shortly.');
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Run failed.');
     } finally {

@@ -246,8 +246,9 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
 
         # Credits are the hard gate: atomically reserve up-front so concurrent
         # runs can't overspend a balance. The per-minute rate and day/week/month
-        # token quotas throttle on top. Reconcile the hold to actual usage in a
-        # finally-style block on every exit path.
+        # token quotas throttle on top. Both are validated synchronously so the
+        # caller gets an immediate 402/429; the (slow) provider call then runs in
+        # a Celery worker, which reconciles the hold to actual usage.
         try:
             hold = credits.begin_charge(request.user)
         except InsufficientCreditsError as c:
@@ -259,46 +260,17 @@ class WorkflowStageViewSet(viewsets.ModelViewSet):
             credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
             return Response({'detail': str(q)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        adapter = get_provider(config)
         model = request.data.get('model') or stage.model or config.default_model
-        try:
-            completion = adapter.complete(
-                system=system_prompt,
-                user=user_prompt,
-                model=model,
-                user_id=_tenant_pseudo_id(request.user),
-            )
-        except ProviderError as e:
-            credits.release_charge(request.user, hold, 0, note='provider error — refunded')
-            _log_usage(request.user, config, error=str(e))
-            result = StageResult.objects.create(
-                stage=stage, provider=config.provider, model=model or '',
-                system_prompt=system_prompt, user_prompt=user_prompt,
-                error=str(e),
-            )
-            return Response(
-                {'detail': str(e), 'result': StageResultSerializer(result).data},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-        usage = _log_usage(request.user, config, completion=completion)
-        credits.release_charge(
-            request.user, hold, completion.tokens_in + completion.tokens_out,
-            usage_log=usage, note=f'Stage run: {stage.title}'[:240],
-        )
-        result = StageResult.objects.create(
-            stage=stage,
-            provider=config.provider,
-            model=completion.model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            output_text=completion.text,
-            tokens_in=completion.tokens_in,
-            tokens_out=completion.tokens_out,
-        )
-        stage.status = StageStatus.AWAITING_APPROVAL
+        stage.status = StageStatus.IN_PROGRESS
         stage.save(update_fields=['status'])
-        return Response(StageResultSerializer(result).data, status=status.HTTP_201_CREATED)
+
+        from .tasks import run_stage_task
+        run_stage_task.delay(
+            stage.id, request.user.id, system_prompt, user_prompt, model or '', hold,
+        )
+
+        stage.refresh_from_db()  # eager mode (dev/tests) already produced the result
+        return Response(WorkflowStageSerializer(stage).data, status=status.HTTP_202_ACCEPTED)
 
 
 def _pick_provider_config(provider=None):

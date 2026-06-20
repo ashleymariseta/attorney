@@ -202,6 +202,11 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+# Run tasks inline when there's no worker (local dev). In production (DEBUG off)
+# tasks are dispatched to the Celery worker so long LLM calls never block a web
+# worker. Override with CELERY_TASK_ALWAYS_EAGER in the environment if needed.
+CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=DEBUG)
+CELERY_TASK_EAGER_PROPAGATES = True
 
 # Security hardening — on by default in production, env-overridable.
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)
