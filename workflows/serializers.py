@@ -232,7 +232,10 @@ class PrecedentTemplateSerializer(serializers.ModelSerializer):
             'id', 'slug', 'name', 'description', 'matter_type', 'category',
             'workflow_template', 'variables', 'body',
         ]
-        read_only_fields = fields
+        # ``slug`` and ``workflow_template`` are fixed; everything else (name,
+        # description, body, variables, …) can be edited so a lawyer can save
+        # tweaks back onto the agreed format — all new documents inherit them.
+        read_only_fields = ['id', 'slug', 'workflow_template']
 
 
 class PrecedentTemplateListSerializer(serializers.ModelSerializer):
@@ -289,9 +292,16 @@ class ContractReviewSerializer(serializers.ModelSerializer):
         model = ContractReview
         fields = [
             'id', 'title', 'status', 'status_display', 'overall_risk', 'summary',
-            'result', 'error', 'tokens_in', 'tokens_out', 'created_at', 'updated_at',
+            'result', 'error', 'tokens_in', 'tokens_out',
+            'sent_matter', 'sent_at', 'created_at', 'updated_at',
         ]
-        read_only_fields = fields
+        # ``title`` and ``result`` are editable so a lawyer can curate the report
+        # (edit/delete sections); the rest is system-managed.
+        read_only_fields = [
+            'id', 'status', 'status_display', 'overall_risk', 'summary',
+            'error', 'tokens_in', 'tokens_out',
+            'sent_matter', 'sent_at', 'created_at', 'updated_at',
+        ]
 
 
 class ContractReviewListSerializer(serializers.ModelSerializer):

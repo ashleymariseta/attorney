@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import abc
 import json
+import socket
 import ssl
 from dataclasses import dataclass, field
 from typing import Optional
@@ -116,7 +117,16 @@ class BaseLLMProvider(abc.ABC):
             detail = e.read().decode('utf-8', errors='replace') if e.fp else str(e)
             raise ProviderError(f'{e.code}: {detail[:500]}')
         except urlerror.URLError as e:
+            # URLError wraps connect-time socket errors, including timeouts.
+            if isinstance(e.reason, (TimeoutError, socket.timeout)):
+                raise ProviderError(f'The provider took too long to respond (>{timeout:.0f}s). Please try again.')
             raise ProviderError(f'Could not reach provider: {e.reason}')
+        except (TimeoutError, socket.timeout):
+            # A read timeout while waiting for the response body is raised here,
+            # NOT wrapped in URLError — catch it so it never 500s the request.
+            raise ProviderError(f'The provider took too long to respond (>{timeout:.0f}s). Please try again.')
+        except OSError as e:
+            raise ProviderError(f'Could not reach provider: {e}')
 
 
 class ClaudeProvider(BaseLLMProvider):
@@ -125,7 +135,7 @@ class ClaudeProvider(BaseLLMProvider):
     name = 'anthropic'
     default_model = 'claude-opus-4-7'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096, timeout=60.0):
         if not self.config.api_key:
             raise ProviderError('No Anthropic API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -141,7 +151,7 @@ class ClaudeProvider(BaseLLMProvider):
         }
         if user_id:
             payload['metadata'] = {'user_id': user_id}
-        data = self._post_json('https://api.anthropic.com/v1/messages', headers, payload)
+        data = self._post_json('https://api.anthropic.com/v1/messages', headers, payload, timeout=timeout)
         text = ''
         for block in data.get('content', []) or []:
             if block.get('type') == 'text':
@@ -230,7 +240,7 @@ class OpenAIProvider(BaseLLMProvider):
     name = 'openai'
     default_model = 'gpt-4o'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096, timeout=60.0):
         if not self.config.api_key:
             raise ProviderError('No OpenAI API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -246,7 +256,7 @@ class OpenAIProvider(BaseLLMProvider):
         if user_id:
             payload['user'] = user_id
         base = (self.config.base_url or 'https://api.openai.com').rstrip('/')
-        data = self._post_json(f'{base}/v1/chat/completions', headers, payload)
+        data = self._post_json(f'{base}/v1/chat/completions', headers, payload, timeout=timeout)
         choices = data.get('choices') or []
         text = choices[0]['message']['content'] if choices else ''
         usage = data.get('usage', {}) or {}
@@ -276,7 +286,7 @@ class LocalProvider(BaseLLMProvider):
     name = 'local'
     default_model = 'llama3.1'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096, timeout=60.0):
         # user_id intentionally unused — self-hosted endpoints typically
         # don't need provider-side attribution and many ignore extra fields.
         del user_id, max_tokens
@@ -296,7 +306,7 @@ class LocalProvider(BaseLLMProvider):
                 'stream': False,
                 'messages': chat,
             }
-            data = self._post_json(f'{base}/api/chat', headers, payload)
+            data = self._post_json(f'{base}/api/chat', headers, payload, timeout=timeout)
             if 'message' in data:
                 return Completion(
                     text=(data['message'] or {}).get('content', ''),
@@ -315,7 +325,7 @@ class LocalProvider(BaseLLMProvider):
             'messages': chat,
             'temperature': 0.2,
         }
-        data = self._post_json(f'{base}/v1/chat/completions', headers, payload)
+        data = self._post_json(f'{base}/v1/chat/completions', headers, payload, timeout=timeout)
         choices = data.get('choices') or []
         text = choices[0]['message']['content'] if choices else ''
         usage = data.get('usage', {}) or {}

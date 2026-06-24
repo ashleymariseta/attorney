@@ -616,6 +616,14 @@ class ContractReview(models.Model):
     error = models.TextField(blank=True)
     tokens_in = models.PositiveIntegerField(default=0)
     tokens_out = models.PositiveIntegerField(default=0)
+    #: Set once the report has been pushed into a matter room (as a draft doc).
+    sent_matter = models.ForeignKey(
+        'core.Matter', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    sent_document = models.ForeignKey(
+        'core.Document', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

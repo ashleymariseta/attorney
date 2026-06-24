@@ -30,7 +30,11 @@ from .models import (
     WorkflowStage,
     WorkflowTemplate,
 )
-from .precedents import render_precedent
+from .precedents import (
+    TEMPLATE_SYSTEM_PROMPT,
+    parse_generated_template,
+    render_precedent,
+)
 from .providers import ProviderError, get_provider, pool_config
 from .serializers import (
     AICreditAccountSerializer,
@@ -525,15 +529,19 @@ class AICreditOrderViewSet(viewsets.ModelViewSet):
 
 # ---- Precedents + documents (editor) ---------------------------------------
 
-class PrecedentTemplateViewSet(viewsets.ReadOnlyModelViewSet):
+class PrecedentTemplateViewSet(viewsets.ModelViewSet):
     """Catalogue of document precedents. Supports ``?workflow_template=<id>``
-    and ``?category=<name>`` filters."""
+    and ``?category=<name>`` filters. Read for everyone; editing the agreed
+    format (``PATCH``) is allowed so saved tweaks flow into all new documents."""
 
     permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
     queryset = PrecedentTemplate.objects.filter(is_active=True)
 
     def get_serializer_class(self):
-        return PrecedentTemplateSerializer if self.action == 'retrieve' else PrecedentTemplateListSerializer
+        if self.action in ('retrieve', 'create', 'update', 'partial_update'):
+            return PrecedentTemplateSerializer
+        return PrecedentTemplateListSerializer
 
     def get_queryset(self):
         qs = PrecedentTemplate.objects.filter(is_active=True)
@@ -544,6 +552,77 @@ class PrecedentTemplateViewSet(viewsets.ReadOnlyModelViewSet):
         if cat:
             qs = qs.filter(category__iexact=cat)
         return qs
+
+    def perform_create(self, serializer):
+        """New precedents need a unique slug; derive one from the name."""
+        from django.utils.text import slugify
+
+        base = (slugify(serializer.validated_data.get('name', '')) or 'template')[:100]
+        slug = base
+        i = 2
+        while PrecedentTemplate.objects.filter(slug=slug).exists():
+            slug = f'{base}-{i}'[:120]
+            i += 1
+        serializer.save(slug=slug, is_active=True)
+
+    @action(detail=False, methods=['post'], url_path='generate')
+    def generate(self, request):
+        """Draft a brand-new precedent from a plain-language brief. Returns the
+        draft (name/description/body/variables) for the lawyer to review and
+        save — it is NOT persisted here. Metered like any other AI call."""
+        if not _is_lawyer(request.user):
+            return Response(
+                {'detail': 'Template drafting is available to practitioners.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        instructions = (request.data.get('instructions') or '').strip()
+        if not instructions:
+            return Response(
+                {'detail': 'Describe the template you need.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+        config = _pick_provider_config()
+        if config is None:
+            return Response(
+                {'detail': 'No AI provider has been configured by the administrator yet.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            hold = credits.begin_charge(request.user)
+        except InsufficientCreditsError as c_err:
+            return Response({'detail': str(c_err)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+        try:
+            _enforce_pool_limits(request.user)
+        except QuotaError as q_err:
+            credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
+            return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        try:
+            completion = get_provider(config).complete(
+                system=TEMPLATE_SYSTEM_PROMPT,
+                user=instructions,
+                model=config.default_model or None,
+                user_id=_tenant_pseudo_id(request.user),
+            )
+        except ProviderError as e:
+            credits.release_charge(request.user, hold, 0, note='provider error — refunded')
+            _log_usage(request.user, config, error=str(e))
+            return Response({'detail': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        usage = _log_usage(request.user, config, completion=completion)
+        credits.release_charge(
+            request.user, hold, completion.tokens_in + completion.tokens_out,
+            usage_log=usage, note='Template drafting',
+        )
+
+        try:
+            draft = parse_generated_template(completion.text)
+        except ValueError:
+            return Response(
+                {'detail': 'The AI did not return a usable template. Try rephrasing your request.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(draft)
 
 
 class WorkflowDocumentViewSet(viewsets.ModelViewSet):
@@ -637,13 +716,44 @@ class WorkflowDocumentViewSet(viewsets.ModelViewSet):
 
 
 
+def _dispatch_contract_review(review_id, user_id, hold):
+    """Kick off the (slow) contract-review LLM call without blocking the request.
+
+    With a Celery broker, dispatch to the worker. Without one — the common local
+    setup where ``CELERY_TASK_ALWAYS_EAGER`` is on — ``.delay()`` would run the
+    whole LLM call synchronously inside the HTTP request and time it out, so we
+    run it in a background thread instead. Either way the client polls the
+    review's status until it is DONE/ERROR.
+    """
+    from django.conf import settings
+
+    from .tasks import run_contract_review_task
+
+    if not getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        run_contract_review_task.delay(review_id, user_id, hold)
+        return
+
+    import threading
+
+    def _run():
+        try:
+            run_contract_review_task(review_id, user_id, hold)
+        finally:
+            # Release this thread's DB connection so it isn't leaked.
+            from django.db import connection
+            connection.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 class ContractReviewViewSet(viewsets.ModelViewSet):
-    """Upload a contract; Claude analyses it into a risk-rated, sectioned report.
-    The provider call runs in a Celery worker (eager in dev)."""
+    """Upload a contract; the AI analyses it into a risk-rated, sectioned report.
+    The provider call runs in a Celery worker, or a background thread when no
+    broker is configured (local dev)."""
 
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
-    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
     queryset = ContractReview.objects.none()
 
     def get_serializer_class(self):
@@ -653,6 +763,61 @@ class ContractReviewViewSet(viewsets.ModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return ContractReview.objects.none()
         return ContractReview.objects.filter(owner=self.request.user)
+
+    def perform_update(self, serializer):
+        """Keep the denormalised ``overall_risk``/``summary`` (used by the list
+        view) in step with the lawyer's edits to ``result``."""
+        review = serializer.save()
+        result = review.result or {}
+        fields = []
+        if isinstance(result, dict):
+            risk = (result.get('overall_risk') or '').lower()
+            if risk in ('high', 'medium', 'low') and risk != review.overall_risk:
+                review.overall_risk = risk
+                fields.append('overall_risk')
+            summary = str(result.get('summary') or '')
+            if summary != review.summary:
+                review.summary = summary
+                fields.append('summary')
+        if fields:
+            review.save(update_fields=fields)
+
+    @action(detail=True, methods=['post'], url_path='send-to-matter')
+    def send_to_matter(self, request, pk=None):
+        """Render the (curated) report to Markdown and drop it into a matter as
+        a draft document. Mirrors WorkflowDocument.send_to_matter visibility."""
+        from django.db.models import Q
+
+        from core.models import Document as MatterDocument
+        from core.models import Matter
+
+        from .contracts import render_report_markdown
+
+        review = self.get_object()
+        if review.status != ContractReviewStatus.DONE:
+            return Response({'detail': 'The review is not finished yet.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        scope = Q(client=user) | Q(lawyers=user)
+        firm_id = getattr(getattr(user, 'lawyer_profile', None), 'firm_id', None)
+        if firm_id:
+            scope |= Q(lawyers__lawyer_profile__firm_id=firm_id)
+        matter = Matter.objects.filter(scope, pk=request.data.get('matter')).distinct().first()
+        if matter is None:
+            return Response({'detail': 'Matter not found or you are not a participant.'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        title = (review.title or (review.result or {}).get('title') or 'Contract review')[:240]
+        body = render_report_markdown(review.title, review.result or {})
+        mdoc = MatterDocument.objects.create(
+            matter=matter, uploader=user, title=title, body=body, kind='draft',
+        )
+        review.sent_matter = matter
+        review.sent_document = mdoc
+        review.sent_at = timezone.now()
+        review.save(update_fields=['sent_matter', 'sent_document', 'sent_at', 'updated_at'])
+        return Response(ContractReviewSerializer(review).data)
 
     def create(self, request, *args, **kwargs):
         if not _is_lawyer(request.user):
@@ -690,8 +855,7 @@ class ContractReviewViewSet(viewsets.ModelViewSet):
         review.status = ContractReviewStatus.PROCESSING
         review.save(update_fields=['status'])
 
-        from .tasks import run_contract_review_task
-        run_contract_review_task.delay(review.id, request.user.id, hold)
+        _dispatch_contract_review(review.id, request.user.id, hold)
 
         review.refresh_from_db()
         return Response(ContractReviewSerializer(review).data, status=status.HTTP_202_ACCEPTED)

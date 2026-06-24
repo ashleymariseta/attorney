@@ -13,7 +13,7 @@ function safeUrl(url: string): string {
 }
 
 /**
- * Renders Markdown (Claude output, precedent documents) with sensible legal-
+ * Renders Markdown (AI output, precedent documents) with sensible legal-
  * document styling. No raw HTML is rendered (react-markdown default), so the
  * output is safe.
  */

@@ -65,7 +65,7 @@ export default function ContractsPage() {
       </Link>
       <h1 className="mt-3 text-2xl font-bold">Contract Review</h1>
       <p className="mt-1 text-sm text-muted">
-        Upload a contract — Claude breaks it into sections and flags risk with a clause-by-clause heat map.
+        Upload a contract — AI breaks it into sections and flags risk with a clause-by-clause heat map.
       </p>
 
       {/* Upload */}

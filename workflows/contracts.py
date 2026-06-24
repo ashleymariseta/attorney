@@ -143,3 +143,51 @@ def parse_review(text: str) -> dict:
         'parties': [str(p)[:200] for p in (data.get('parties') or []) if p][:12],
         'sections': sections,
     }
+
+
+def render_report_markdown(title: str, result: dict) -> str:
+    """Render a (possibly lawyer-edited) contract-review report as Markdown for
+    a matter draft. Mirrors the on-screen report: overview, risk counts, parties,
+    then each section with its issues and recommended fixes."""
+    result = result or {}
+    sections = result.get('sections') or []
+    counts = {'high': 0, 'medium': 0, 'low': 0}
+    for s in sections:
+        r = (s.get('risk') or '').lower()
+        if r in counts:
+            counts[r] += 1
+
+    out: list[str] = []
+    out.append(f'# {title or result.get("title") or "Contract review"}')
+    overall = (result.get('overall_risk') or '').upper()
+    if overall:
+        out.append(f'**Overall risk: {overall}**  ·  '
+                   f'{counts["high"]} high · {counts["medium"]} medium · {counts["low"]} low')
+    if result.get('parties'):
+        out.append(f'**Parties:** {" · ".join(str(p) for p in result["parties"])}')
+    if result.get('summary'):
+        out.append('')
+        out.append(str(result['summary']))
+
+    for s in sections:
+        risk = (s.get('risk') or '').upper()
+        out.append('')
+        out.append(f'## {s.get("heading") or "Section"} — {risk} risk')
+        if s.get('summary'):
+            out.append(str(s['summary']))
+        if s.get('excerpt'):
+            out.append('')
+            out.append(f'> {s["excerpt"]}')
+        issues = s.get('issues') or []
+        if issues:
+            out.append('')
+            for it in issues:
+                sev = (it.get('severity') or '').upper()
+                out.append(f'- **[{sev}] {it.get("issue") or ""}**')
+                if it.get('recommendation'):
+                    out.append(f'  - _Fix:_ {it["recommendation"]}')
+
+    out.append('')
+    out.append('---')
+    out.append('_AI-generated analysis, reviewed by counsel — not a substitute for full legal review._')
+    return '\n'.join(out)

@@ -979,7 +979,15 @@ export const coResearcher = {
       body: JSON.stringify(payload),
     });
     if (!res.ok || !res.body) {
-      handlers.onError(`Request failed (${res.status}).`);
+      // Surface the real server error (e.g. {"question": ["Ensure this field
+      // has at least 4 characters."]}) rather than a bare status code.
+      let detail = `Request failed (${res.status}).`;
+      try {
+        detail = describe(await res.json());
+      } catch {
+        /* non-JSON body — keep the status fallback */
+      }
+      handlers.onError(detail);
       return;
     }
     const reader = res.body.getReader();
@@ -1239,6 +1247,42 @@ export const precedents = {
   get(id: number) {
     return api<Precedent>(`/api/v1/precedents/${id}/`);
   },
+  update(
+    id: number,
+    patch: Partial<Pick<Precedent, 'name' | 'description' | 'matter_type' | 'category' | 'body' | 'variables'>>,
+  ) {
+    return api<Precedent>(`/api/v1/precedents/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  },
+  create(input: {
+    name: string;
+    body: string;
+    description?: string;
+    category?: string;
+    matter_type?: string;
+    variables?: PrecedentVariable[];
+  }) {
+    return api<Precedent>('/api/v1/precedents/', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  // AI-draft a brand-new precedent from a plain-language brief (not yet saved).
+  generate(instructions: string) {
+    return api<{
+      name: string;
+      description: string;
+      category: string;
+      matter_type: string;
+      body: string;
+      variables: PrecedentVariable[];
+    }>('/api/v1/precedents/generate/', {
+      method: 'POST',
+      body: JSON.stringify({ instructions }),
+    });
+  },
 };
 
 export const workflowDocuments = {
@@ -1316,6 +1360,8 @@ export interface ContractReview {
   error: string;
   tokens_in: number;
   tokens_out: number;
+  sent_matter: number | null;
+  sent_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1342,6 +1388,18 @@ export const contractReviews = {
     form.append('file', file);
     if (title) form.append('title', title);
     return api<ContractReview>('/api/v1/contract-reviews/', { method: 'POST', body: form });
+  },
+  update(id: number, patch: { title?: string; result?: ContractResult }) {
+    return api<ContractReview>(`/api/v1/contract-reviews/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  },
+  sendToMatter(id: number, matter: number) {
+    return api<ContractReview>(`/api/v1/contract-reviews/${id}/send-to-matter/`, {
+      method: 'POST',
+      body: JSON.stringify({ matter }),
+    });
   },
   remove(id: number) {
     return api<void>(`/api/v1/contract-reviews/${id}/`, { method: 'DELETE' });

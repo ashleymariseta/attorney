@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coins, FileSignature, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, ShieldAlert, Sparkles, Users, Wallet, X } from 'lucide-react';
+import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coins, FileSignature, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, ShieldAlert, Users, Wallet, X } from 'lucide-react';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import NotificationBell from '@/components/NotificationBell';
 import { emailVerify, ApiError } from '@/lib/api';
@@ -475,9 +475,8 @@ function AIWorkflowsGroup({
       </button>
       {open && (
         <div className="mt-1 space-y-0.5">
-          {subNavItem('/ai-workflows', 'My Workflows', <Sparkles size={13} />)}
           {subNavItem('/ai-workflows/ai-researcher', 'AI-Researcher', <BookText size={13} />)}
-          {subNavItem('/ai-workflows/templates', 'Templates', <FileText size={13} />)}
+          {subNavItem('/ai-workflows/templates', 'Templates / Precedents', <FileText size={13} />)}
           {subNavItem('/ai-workflows/documents', 'Documents', <FileSignature size={13} />)}
           {subNavItem('/ai-workflows/contracts', 'Contract Review', <ShieldAlert size={13} />)}
           {subNavItem('/ai-workflows/credits', 'AI Credits', <Coins size={13} />)}
