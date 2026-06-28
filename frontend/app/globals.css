@@ -67,6 +67,77 @@ body {
   scrollbar-color: #cdd8d6 transparent;
 }
 
+/* scrollable, but with no visible scrollbar */
+.no-scrollbar {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+
+/* Drafting typeface — Book Antiqua everywhere a legal draft is shown (document
+   preview, AI-Researcher answers) so the screen matches the export. */
+.font-draft, .font-draft .md-body {
+  font-family: 'Book Antiqua', Palatino, 'Palatino Linotype', 'Palatino LT STD', Georgia, serif;
+}
+
+/* Full on-screen drafting standard: Book Antiqua, justified, 1.5 spacing, and
+   numbered paragraphs with a hanging indent — mirrors the printed PDF. */
+.draft-doc, .draft-doc .md-body {
+  font-family: 'Book Antiqua', Palatino, 'Palatino Linotype', 'Palatino LT STD', Georgia, serif;
+  line-height: 1.5;
+  text-align: justify;
+}
+.draft-doc .md-body ol {
+  counter-reset: item;
+  list-style: none;
+  padding-left: 0;
+}
+.draft-doc .md-body ol > li {
+  position: relative;
+  padding-left: 2.2em;
+  text-align: justify;
+}
+.draft-doc .md-body ol > li::before {
+  content: counter(item) ".";
+  counter-increment: item;
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* WYSIWYG (TipTap/ProseMirror) document surface — mirror the printed PDF. */
+.draft-doc .ProseMirror { color: #111; }
+.draft-doc .ProseMirror:focus { outline: none; }
+.draft-doc .ProseMirror > * + * { margin-top: 0.6em; }
+.draft-doc .ProseMirror h1 { text-align: center; font-weight: 700; font-size: 1.05rem; }
+.draft-doc .ProseMirror h2 { font-weight: 700; font-size: 1rem; }
+.draft-doc .ProseMirror h3 { font-weight: 700; font-size: 0.95rem; }
+.draft-doc .ProseMirror p { margin: 0; }
+.draft-doc .ProseMirror ul { list-style: disc; padding-left: 1.6em; }
+.draft-doc .ProseMirror ol { list-style: decimal; padding-left: 2.2em; }
+.draft-doc .ProseMirror li { margin: 0.2em 0; }
+.draft-doc .ProseMirror li > p { margin: 0; }
+.draft-doc .ProseMirror blockquote {
+  border-left: 3px solid #ccc; padding-left: 0.9em; color: #555; font-style: italic; text-align: left;
+}
+.draft-doc .ProseMirror a { color: #1a57bf; text-decoration: underline; }
+.draft-doc .ProseMirror img { max-width: 100%; height: auto; display: block; margin: 0.6em auto; }
+.draft-doc .ProseMirror hr { border: none; border-top: 1px solid #ccc; margin: 1em 0; }
+.draft-doc .ProseMirror pre {
+  background: #f4f4f4; border-radius: 4px; padding: 0.6em 0.8em;
+  font-family: 'Courier New', monospace; font-size: 0.85rem; text-align: left; white-space: pre-wrap;
+}
+.draft-doc .ProseMirror table { border-collapse: collapse; width: 100%; margin: 0.6em 0; }
+.draft-doc .ProseMirror th,
+.draft-doc .ProseMirror td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+.draft-doc .ProseMirror th { background: #f0f0f0; font-weight: 700; }
+/* placeholder when empty */
+.draft-doc .ProseMirror p.is-editor-empty:first-child::before {
+  content: 'Start writing your document…'; color: #9aa3a1; float: left; height: 0; pointer-events: none;
+}
+
 /* horizontal marquee — duplicate children for seamless loop */
 @keyframes marquee-x {
   from { transform: translateX(0); }

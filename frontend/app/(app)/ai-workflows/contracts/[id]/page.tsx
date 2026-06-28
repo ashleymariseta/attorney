@@ -2,9 +2,12 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { Empty } from 'antd';
 import {
-  AlertTriangle, ArrowLeft, Check, ChevronDown, Download, Loader2, Pencil, Plus, Save, Send, Trash2, X,
+  AlertTriangle, ArrowLeft, Check, ChevronDown, Download, Loader2, Pencil, Plus, Save, Search, Send, Trash2, X,
 } from 'lucide-react';
+
+const MATTER_SEARCH_MIN = 3;
 import {
   contractReviews, matters, ApiError,
   type ContractReview, type ContractResult, type ContractSection, type ContractIssue,
@@ -440,16 +443,34 @@ function SectionEditor({
 function SendToMatterModal({ reviewId, onClose, onSent }: { reviewId: number; onClose: () => void; onSent: (r: ContractReview) => void }) {
   const toast = useToast();
   const [list, setList] = useState<Matter[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [sel, setSel] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const q = query.trim();
+  const tooShort = q.length < MATTER_SEARCH_MIN;
+
+  // Server-side search (debounced), and only once the lawyer has typed enough —
+  // we never pull every matter, and the API returns a paginated page (25).
   useEffect(() => {
-    (async () => {
-      try { const r = await matters.list(); setList(r.results); } catch {}
-      setLoading(false);
-    })();
-  }, []);
+    if (tooShort) { setList([]); setCount(0); setLoading(false); return; }
+    let alive = true;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await matters.list({ search: q });
+        if (!alive) return;
+        setList(r.results);
+        setCount(r.count);
+      } catch {
+        if (alive) { setList([]); setCount(0); }
+      }
+      if (alive) setLoading(false);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, tooShort]);
 
   async function send() {
     if (!sel) return;
@@ -465,28 +486,62 @@ function SendToMatterModal({ reviewId, onClose, onSent }: { reviewId: number; on
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold">Send report to matter</h3>
-        <p className="mt-0.5 text-sm text-muted">Adds the report as a draft document in the matter room.</p>
-        <div className="mt-4 max-h-72 space-y-1 overflow-auto">
-          {loading ? (
-            <p className="text-sm text-muted">Loading matters…</p>
+        <p className="mt-0.5 text-sm text-muted">Adds the report as a formatted PDF document in the matter room.</p>
+
+        <div className="relative mt-4">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by matter, client, practice area…"
+            className="w-full rounded-lg border border-line py-2 pl-9 pr-3 text-sm outline-none focus:border-brand"
+          />
+        </div>
+
+        {/* Fixed height so the modal never resizes with the result count. */}
+        <div className="no-scrollbar mt-2 h-72 overflow-y-auto">
+          {tooShort ? (
+            <div className="flex h-full items-center justify-center">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Search client matters" />
+            </div>
+          ) : loading ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted">
+              <Loader2 size={16} className="mr-2 animate-spin" /> Searching…
+            </div>
           ) : list.length === 0 ? (
-            <p className="text-sm text-muted">You have no matters.</p>
+            <div className="flex h-full items-center justify-center">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No matters match “${q}”`} />
+            </div>
           ) : (
-            list.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => setSel(m.id)}
-                className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm ${sel === m.id ? 'border-brand bg-brand-light/20' : 'border-line hover:border-brand'}`}
-              >
-                <span className="flex-1 truncate">{m.title}</span>
-                {sel === m.id && <Check size={14} className="text-brand-dark" />}
-              </button>
-            ))
+            <div className="space-y-1">
+              {list.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setSel(m.id)}
+                  className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left ${sel === m.id ? 'border-brand bg-brand-light/20' : 'border-line hover:border-brand'}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{m.title}</span>
+                    <span className="block truncate text-xs text-muted">
+                      {[m.client?.full_name, m.practice_area].filter(Boolean).join(' · ') || '—'}
+                    </span>
+                  </span>
+                  {sel === m.id && <Check size={15} className="shrink-0 text-brand-dark" />}
+                </button>
+              ))}
+              {count > list.length && (
+                <p className="px-2 py-1.5 text-center text-[11px] text-muted">
+                  Showing {list.length} of {count} — keep typing to narrow it down.
+                </p>
+              )}
+            </div>
           )}
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+
+        <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
           <button onClick={onClose} disabled={busy} className="btn-outline">Cancel</button>
           <button onClick={send} disabled={busy || !sel} className="btn-primary">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
@@ -519,7 +574,7 @@ function reportHtml(title: string, result: ContractResult): string {
         ${it.recommendation ? `<div style="font-size:10pt;color:#444;margin-top:2px;"><em>Fix:</em> ${esc(it.recommendation)}</div>` : ''}
       </li>`).join('');
     return `
-      <div style="border-left:4px solid ${RISK_HEX[s.risk]};padding:8px 0 8px 12px;margin:16px 0;page-break-inside:avoid;">
+      <div class="section" style="border-left:4px solid ${RISK_HEX[s.risk]};padding:8px 0 8px 12px;margin:16px 0;">
         <h2 style="font-size:12.5pt;margin:0;">${esc(s.heading)}
           <span style="font-size:9pt;font-weight:bold;text-transform:uppercase;color:${RISK_HEX[s.risk]};"> · ${esc(s.risk)} risk</span>
         </h2>
@@ -529,14 +584,39 @@ function reportHtml(title: string, result: ContractResult): string {
       </div>`;
   }).join('');
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title || result.title || 'Contract review')}</title>
+  return `<!doctype html><html><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${esc(title || result.title || 'Contract review')}</title>
     <style>
-      @page { margin: 20mm 18mm; }
-      body { font-family: Georgia, 'Times New Roman', serif; font-size: 11.5pt; line-height: 1.5; color:#111; }
+      @page { size: A4; margin: 18mm 16mm; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: #525659;
+        font-family: 'Book Antiqua', Palatino, 'Palatino Linotype', Georgia, serif;
+        font-size: 11.5pt; line-height: 1.5; color: #111;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      /* On screen: a centred A4 sheet on a grey desk, matching the platform. */
+      .sheet {
+        width: 210mm; min-height: 297mm; margin: 20px auto;
+        padding: 18mm 16mm; background: #fff;
+        box-shadow: 0 2px 14px rgba(0,0,0,.35);
+      }
       h1 { font-size: 17pt; margin: 0 0 4px; }
       .meta { color:#444; font-size:10pt; margin: 2px 0 10px; }
       .pill { display:inline-block;font-weight:bold;text-transform:uppercase;color:#fff;border-radius:10px;padding:2px 9px;font-size:10pt; }
+      /* Let sections flow across pages (no big trailing gaps), but keep a
+         heading with its first lines and don't split an individual issue. */
+      .section h2 { break-after: avoid; page-break-after: avoid; }
+      .section li { break-inside: avoid; page-break-inside: avoid; }
+      /* When actually printing, drop the desk + sheet chrome — @page handles margins. */
+      @media print {
+        body { background: #fff; }
+        .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+      }
     </style></head><body>
+    <div class="sheet">
     <h1>${esc(title || result.title || 'Contract review')}</h1>
     <div class="meta">
       <span class="pill" style="background:${RISK_HEX[result.overall_risk] || '#999'}">${esc(result.overall_risk)} risk</span>
@@ -549,5 +629,6 @@ function reportHtml(title: string, result: ContractResult): string {
     ${sectionHtml}
     <hr style="border:none;border-top:1px solid #ccc;margin:18px 0;">
     <p style="font-size:9pt;color:#777;">AI-generated analysis, reviewed by counsel — not a substitute for full legal review.</p>
+    </div>
     </body></html>`;
 }

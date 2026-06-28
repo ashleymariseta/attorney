@@ -3,9 +3,9 @@
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ArrowLeft, Eye, FileText, Loader2, Pencil, Plus, Save, Sparkles, Wand2, X,
+  ArrowLeft, Eye, FileText, Loader2, Paperclip, Pencil, Plus, Save, Sparkles, Trash2, Wand2, X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   precedents as precedentsApi, workflowDocuments, ApiError,
   type Precedent, type PrecedentVariable,
@@ -68,6 +68,23 @@ export default function TemplatesPrecedentsPage() {
     toast.success(`“${created.name}” saved to your templates.`, { major: true });
   }
 
+  async function del(p: Precedent) {
+    const ok = await toast.confirm({
+      title: `Delete “${p.name}”?`,
+      body: 'It will be removed from your templates. Documents already created from it are kept.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await precedentsApi.remove(p.id);
+      setList((prev) => prev.filter((x) => x.id !== p.id));
+      toast.success('Template deleted.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete the template.');
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <Link
@@ -124,19 +141,28 @@ export default function TemplatesPrecedentsPage() {
                   <span className="badge-muted text-[10px]">+{(p.variables!.length - 8)} more</span>
                 )}
               </div>
-              <div className="mt-4 flex items-center justify-end gap-2 border-t border-line pt-3">
+              <div className="mt-4 flex items-center gap-2 border-t border-line pt-3">
                 <button
-                  onClick={() => setEditing(p)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-semibold text-ink transition hover:border-brand"
+                  onClick={() => del(p)}
+                  title="Delete template"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line text-muted transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
                 >
-                  <Pencil size={14} /> Edit template
+                  <Trash2 size={15} />
                 </button>
-                <button
-                  onClick={() => setFilling(p)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand"
-                >
-                  <Wand2 size={14} /> Fill &amp; create
-                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => setEditing(p)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-semibold text-ink transition hover:border-brand"
+                  >
+                    <Pencil size={14} /> Edit template
+                  </button>
+                  <button
+                    onClick={() => setFilling(p)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand"
+                  >
+                    <Wand2 size={14} /> Fill &amp; create
+                  </button>
+                </div>
               </div>
             </li>
           ))}
@@ -335,8 +361,8 @@ function EditTemplateModal({
                   placeholder="Type the agreed format. Use {{placeholders}} for the gaps to fill in."
                 />
               ) : (
-                <div className="rounded-lg border border-line bg-white px-6 py-6">
-                  <Markdown className="font-serif">{body || '_Nothing to preview yet._'}</Markdown>
+                <div className="draft-doc rounded-lg border border-line bg-white px-6 py-6">
+                  <Markdown>{body || '_Nothing to preview yet._'}</Markdown>
                 </div>
               )}
 
@@ -379,6 +405,8 @@ function NewWithAIModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const toast = useToast();
   const [phase, setPhase] = useState<'describe' | 'review'>('describe');
   const [instructions, setInstructions] = useState('');
+  const [files, setFiles] = useState<{ name: string; media_type: string; data: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [generating, setGenerating] = useState(false);
   // Draft under review.
   const [name, setName] = useState('');
@@ -392,11 +420,31 @@ function NewWithAIModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const detectedKeys = useMemo(() => placeholderKeys(body), [body]);
   const busy = generating || saving;
 
+  async function onPickFiles(list: FileList | null) {
+    if (!list) return;
+    for (const f of Array.from(list)) {
+      if (files.length >= 3) { toast.error('Up to 3 files.'); break; }
+      if (f.size > 10 * 1024 * 1024) { toast.error(`“${f.name}” is too large (max 10 MB).`); continue; }
+      try {
+        const data: string = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(String(r.result).split(',')[1] ?? '');
+          r.onerror = () => rej(new Error('read failed'));
+          r.readAsDataURL(f);
+        });
+        setFiles((cur) => [...cur, { name: f.name, media_type: f.type || 'application/octet-stream', data }]);
+      } catch {
+        toast.error(`Could not read “${f.name}”.`);
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  }
+
   async function generate() {
     if (!instructions.trim()) return;
     setGenerating(true);
     try {
-      const draft = await precedentsApi.generate(instructions.trim());
+      const draft = await precedentsApi.generate(instructions.trim(), files);
       setName(draft.name);
       setDescription(draft.description);
       setCategory(draft.category);
@@ -459,6 +507,39 @@ function NewWithAIModal({ onClose, onCreated }: { onClose: () => void; onCreated
               <p className="mt-2 text-xs text-muted">
                 Be specific about the document type, parties, and the gaps that should be fillable.
               </p>
+
+              {/* Optional attachment — e.g. an order or pleading being responded to. */}
+              <div className="mt-3">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md"
+                  className="hidden"
+                  onChange={(e) => onPickFiles(e.target.files)}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-brand"
+                >
+                  <Paperclip size={13} /> Attach file
+                </button>
+                <span className="ml-2 text-[11px] text-muted">e.g. the order or pleading you&rsquo;re responding to (PDF, image, or text)</span>
+                {files.length > 0 && (
+                  <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {files.map((f, i) => (
+                      <li key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-canvas px-2 py-1 text-[11px] text-ink">
+                        <FileText size={11} className="text-brand-dark" />
+                        <span className="max-w-[180px] truncate">{f.name}</span>
+                        <button onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} className="text-muted hover:text-rose-600">
+                          <X size={11} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-4">
               <button onClick={onClose} disabled={busy} className="btn-outline text-sm">Cancel</button>
@@ -508,8 +589,8 @@ function NewWithAIModal({ onClose, onCreated }: { onClose: () => void; onCreated
                   placeholder="The drafted format will appear here. Use {{placeholders}} for the gaps to fill in."
                 />
               ) : (
-                <div className="rounded-lg border border-line bg-white px-6 py-6">
-                  <Markdown className="font-serif">{body || '_Nothing to preview yet._'}</Markdown>
+                <div className="draft-doc rounded-lg border border-line bg-white px-6 py-6">
+                  <Markdown>{body || '_Nothing to preview yet._'}</Markdown>
                 </div>
               )}
 

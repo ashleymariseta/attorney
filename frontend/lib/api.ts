@@ -438,8 +438,9 @@ export const auth = {
 };
 
 export const matters = {
-  list() {
-    return api<Paginated<Matter>>('/api/v1/matters/');
+  list(params?: { search?: string }) {
+    const qs = params?.search ? `?search=${encodeURIComponent(params.search)}` : '';
+    return api<Paginated<Matter>>(`/api/v1/matters/${qs}`);
   },
   get(id: number) {
     return api<Matter>(`/api/v1/matters/${id}/`);
@@ -1247,6 +1248,9 @@ export const precedents = {
   get(id: number) {
     return api<Precedent>(`/api/v1/precedents/${id}/`);
   },
+  remove(id: number) {
+    return api<void>(`/api/v1/precedents/${id}/`, { method: 'DELETE' });
+  },
   update(
     id: number,
     patch: Partial<Pick<Precedent, 'name' | 'description' | 'matter_type' | 'category' | 'body' | 'variables'>>,
@@ -1270,7 +1274,11 @@ export const precedents = {
     });
   },
   // AI-draft a brand-new precedent from a plain-language brief (not yet saved).
-  generate(instructions: string) {
+  // Optionally include attachments (e.g. an order being responded to) as context.
+  generate(
+    instructions: string,
+    attachments?: { name: string; media_type: string; data: string }[],
+  ) {
     return api<{
       name: string;
       description: string;
@@ -1280,7 +1288,7 @@ export const precedents = {
       variables: PrecedentVariable[];
     }>('/api/v1/precedents/generate/', {
       method: 'POST',
-      body: JSON.stringify({ instructions }),
+      body: JSON.stringify({ instructions, attachments: attachments ?? [] }),
     });
   },
 };
@@ -1320,6 +1328,65 @@ export const workflowDocuments = {
       method: 'POST',
       body: JSON.stringify({ matter }),
     });
+  },
+  // Download the formatted, page-numbered PDF (server-rendered to the drafting
+  // standard). Fetches with auth, then triggers a browser download.
+  async downloadPdf(id: number, filename: string) {
+    const token = getAccess();
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    const res = await fetch(`${base}/api/v1/workflow-documents/${id}/pdf/`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) throw new ApiError(res.status, null, 'Could not generate the PDF.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(filename || 'document').replace(/[^\w.-]+/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+  // Render ad-hoc content (e.g. an AI-Researcher answer) to a PDF and download
+  // it — no document is saved. Opens the file for viewing once downloaded.
+  async renderPdf(title: string, body: string) {
+    const token = getAccess();
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    const res = await fetch(`${base}/api/v1/workflow-documents/render-pdf/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ title, body }),
+    });
+    if (!res.ok) throw new ApiError(res.status, null, 'Could not generate the PDF.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(title || 'document').replace(/[^\w.-]+/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+  // Download the document as a Word (.docx) file (server-rendered to the
+  // drafting standard, with a live page-number footer).
+  async downloadDocx(id: number, filename: string) {
+    const token = getAccess();
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+    const res = await fetch(`${base}/api/v1/workflow-documents/${id}/docx/`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) throw new ApiError(res.status, null, 'Could not generate the Word file.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(filename || 'document').replace(/[^\w.-]+/g, '_')}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 };
 

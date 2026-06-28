@@ -7,6 +7,7 @@ import '../../api/endpoints.dart';
 import '../../router.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/auth_scaffold.dart';
 import '../../widgets/common.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
@@ -62,95 +63,84 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.surface,
-      appBar: AppBar(
-        backgroundColor: AppColors.surface,
-        elevation: 0,
-        leading: BackButton(onPressed: () => context.go(Routes.login)),
+    return AuthScaffold(
+      title: 'Create your account',
+      subtitle: 'Book counsel, open matters and keep everything on record.',
+      onBack: () => context.go(Routes.login),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('Already registered?', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+          TextButton(
+            onPressed: () => context.go(Routes.login),
+            child: const Text('Log in'),
+          ),
+        ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: ListView(
-            children: [
-              const Text(
-                'Create your account',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.ink),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _firstName,
-                      decoration: const InputDecoration(
-                        labelText: 'First name',
-                        prefixIcon: Icon(LucideIcons.user, size: 18, color: AppColors.muted),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _lastName,
-                      decoration: const InputDecoration(labelText: 'Last name'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _email,
-                keyboardType: TextInputType.emailAddress,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _firstName,
                 decoration: const InputDecoration(
-                  labelText: 'Email',
-                  prefixIcon: Icon(LucideIcons.mail, size: 18, color: AppColors.muted),
+                  labelText: 'First name',
+                  prefixIcon: Icon(LucideIcons.user, size: 18, color: AppColors.muted),
                 ),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password (min 8 chars)',
-                  prefixIcon: Icon(LucideIcons.lock, size: 18, color: AppColors.muted),
-                ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _lastName,
+                decoration: const InputDecoration(labelText: 'Last name'),
               ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _role,
-                decoration: const InputDecoration(
-                  labelText: 'I am a',
-                  prefixIcon: Icon(LucideIcons.briefcase, size: 18, color: AppColors.muted),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'client_individual', child: Text('Client — Individual')),
-                  DropdownMenuItem(value: 'client_business', child: Text('Client — Business')),
-                  DropdownMenuItem(value: 'lawyer', child: Text('Lawyer')),
-                ],
-                onChanged: (v) => setState(() => _role = v ?? 'client_individual'),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                ErrorBanner(message: _error!),
-              ],
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: _busy ? null : _submit,
-                icon: const Icon(LucideIcons.userPlus, size: 16),
-                label: Text(_busy ? 'Creating…' : 'Create account'),
-              ),
-              Center(
-                child: TextButton(
-                  onPressed: () => context.go(Routes.login),
-                  child: const Text('Already registered? Log in'),
-                ),
-              ),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _email,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(
+            labelText: 'Email',
+            prefixIcon: Icon(LucideIcons.mail, size: 18, color: AppColors.muted),
           ),
         ),
-      ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _password,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'Password (min 8 chars)',
+            prefixIcon: Icon(LucideIcons.lock, size: 18, color: AppColors.muted),
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          initialValue: _role,
+          decoration: const InputDecoration(
+            labelText: 'I am a',
+            prefixIcon: Icon(LucideIcons.briefcase, size: 18, color: AppColors.muted),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'client_individual', child: Text('Client — Individual')),
+            DropdownMenuItem(value: 'client_business', child: Text('Client — Business')),
+            DropdownMenuItem(value: 'lawyer', child: Text('Lawyer')),
+          ],
+          onChanged: (v) => setState(() => _role = v ?? 'client_individual'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          ErrorBanner(message: _error!),
+        ],
+        const SizedBox(height: 20),
+        FilledButton.icon(
+          onPressed: _busy ? null : _submit,
+          icon: const Icon(LucideIcons.userPlus, size: 16),
+          label: Text(_busy ? 'Creating…' : 'Create account'),
+        ),
+      ],
     );
   }
 }

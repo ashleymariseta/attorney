@@ -20,6 +20,11 @@ final endpointsProvider = Provider<Endpoints>((ref) {
   return Endpoints(ref.watch(apiClientProvider));
 });
 
+/// Whether the user has already seen the onboarding carousel. Loaded from
+/// SharedPreferences during splash; the router reads it to decide whether a
+/// first-time anonymous user lands on onboarding or straight on login.
+final onboardingSeenProvider = StateProvider<bool>((_) => true);
+
 /// Tri-state auth status — populated by [AuthController.refresh].
 enum AuthStatus { unknown, authed, anonymous }
 

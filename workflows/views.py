@@ -535,13 +535,19 @@ class PrecedentTemplateViewSet(viewsets.ModelViewSet):
     format (``PATCH``) is allowed so saved tweaks flow into all new documents."""
 
     permission_classes = [IsAuthenticated]
-    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
     queryset = PrecedentTemplate.objects.filter(is_active=True)
 
     def get_serializer_class(self):
         if self.action in ('retrieve', 'create', 'update', 'partial_update'):
             return PrecedentTemplateSerializer
         return PrecedentTemplateListSerializer
+
+    def perform_destroy(self, instance):
+        """Soft-delete: drop it from the catalogue but keep any documents that
+        were created from it (their FK is SET_NULL on a hard delete anyway)."""
+        instance.is_active = False
+        instance.save(update_fields=['is_active', 'updated_at'])
 
     def get_queryset(self):
         qs = PrecedentTemplate.objects.filter(is_active=True)
@@ -587,6 +593,24 @@ class PrecedentTemplateViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Optional attachment(s) — e.g. the order/pleading being responded to —
+        # become document/image/text blocks the model can read (reuses the
+        # AI-Researcher attachment builder).
+        from corpus.views import AttachmentError, _content_blocks
+
+        brief = instructions
+        if request.data.get('attachments'):
+            brief = (
+                'Draft the template described below. Use the attached file(s) as '
+                'context (e.g. the order or pleading being responded to); do NOT '
+                'copy case-specific details from them into the template — keep '
+                f'those as placeholders.\n\n{instructions}'
+            )
+        try:
+            content = _content_blocks(brief, request.data.get('attachments'))
+        except AttachmentError as a_err:
+            return Response({'detail': str(a_err)}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             hold = credits.begin_charge(request.user)
         except InsufficientCreditsError as c_err:
@@ -597,12 +621,18 @@ class PrecedentTemplateViewSet(viewsets.ModelViewSet):
             credits.release_charge(request.user, hold, 0, note='quota throttle — no run')
             return Response({'detail': str(q_err)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
+        complete_kwargs = (
+            {'messages': [{'role': 'user', 'content': content}]}
+            if isinstance(content, list) else {'user': content}
+        )
         try:
             completion = get_provider(config).complete(
                 system=TEMPLATE_SYSTEM_PROMPT,
-                user=instructions,
                 model=config.default_model or None,
                 user_id=_tenant_pseudo_id(request.user),
+                max_tokens=8192,  # legal templates are long; avoid truncated JSON
+                timeout=180.0,
+                **complete_kwargs,
             )
         except ProviderError as e:
             credits.release_charge(request.user, hold, 0, note='provider error — refunded')
@@ -685,11 +715,17 @@ class WorkflowDocumentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='send-to-matter')
     def send_to_matter(self, request, pk=None):
-        """Create a matter draft document from this document and link it."""
+        """Push this document into a matter as a formatted PDF document (with the
+        Markdown kept as a text fallback) and link it."""
+        from django.core.files.base import ContentFile
         from django.db.models import Q
+        from django.utils.text import slugify
 
         from core.models import Document as MatterDocument
-        from core.models import Matter
+        from core.models import DocumentKind, Matter
+
+        from .dochtml import html_to_text, to_html
+        from .docpdf import render_document_pdf
 
         doc = self.get_object()
         user = request.user
@@ -704,15 +740,75 @@ class WorkflowDocumentViewSet(viewsets.ModelViewSet):
                 {'detail': 'Matter not found or you are not a participant.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        mdoc = MatterDocument.objects.create(
-            matter=matter, uploader=request.user, title=doc.title[:240],
-            body=doc.body, kind='draft',
+        title = (doc.title or 'Document')[:240]
+        # The matter room shows Document.body as plain text — store a readable
+        # plain-text version, never raw HTML. The PDF is the real artifact.
+        mdoc = MatterDocument(
+            matter=matter, uploader=user, title=title,
+            body=html_to_text(to_html(doc.body or '')),
         )
+        try:
+            pdf = render_document_pdf(doc.title, doc.body or '')
+            mdoc.kind = DocumentKind.DOCUMENT
+            mdoc.file.save(f'{slugify(title) or "document"}.pdf', ContentFile(pdf), save=False)
+        except Exception:  # noqa: BLE001 — degrade to a plain-text draft, never 500
+            mdoc.kind = DocumentKind.DRAFT
+        mdoc.save()
         doc.sent_matter = matter
         doc.sent_document = mdoc
         doc.sent_at = timezone.now()
         doc.save(update_fields=['sent_matter', 'sent_document', 'sent_at', 'updated_at'])
         return Response(WorkflowDocumentSerializer(doc).data)
+
+    @action(detail=True, methods=['get'], url_path='pdf')
+    def pdf(self, request, pk=None):
+        """Download the document as a formatted, page-numbered PDF (the firm's
+        drafting standard: Arial 12pt, 1.5 spacing, A4, 1-inch margins, justified,
+        numbered hanging-indent paragraphs, 9pt running footer)."""
+        from django.http import HttpResponse
+        from django.utils.text import slugify
+
+        from .docpdf import render_document_pdf
+
+        doc = self.get_object()
+        pdf_bytes = render_document_pdf(doc.title, doc.body or '')
+        resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{slugify(doc.title) or "document"}.pdf"'
+        return resp
+
+    @action(detail=True, methods=['get'], url_path='docx')
+    def docx(self, request, pk=None):
+        """Download the document as a Word (.docx) file — same drafting standard
+        as the PDF, with a live page-number footer field."""
+        from django.http import HttpResponse
+        from django.utils.text import slugify
+
+        from .docx_export import render_document_docx
+
+        doc = self.get_object()
+        data = render_document_docx(doc.title, doc.body or '')
+        resp = HttpResponse(
+            data,
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        resp['Content-Disposition'] = f'attachment; filename="{slugify(doc.title) or "document"}.docx"'
+        return resp
+
+    @action(detail=False, methods=['post'], url_path='render-pdf')
+    def render_pdf(self, request):
+        """Render ad-hoc content (e.g. an AI-Researcher answer) to a formatted
+        PDF for download/view, without saving a document. Body: {title, body}."""
+        from django.http import HttpResponse
+        from django.utils.text import slugify
+
+        from .docpdf import render_document_pdf
+
+        title = (request.data.get('title') or 'Document').strip()[:200] or 'Document'
+        body = request.data.get('body') or ''
+        pdf_bytes = render_document_pdf(title, body)
+        resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{slugify(title) or "document"}.pdf"'
+        return resp
 
 
 
@@ -786,12 +882,14 @@ class ContractReviewViewSet(viewsets.ModelViewSet):
     def send_to_matter(self, request, pk=None):
         """Render the (curated) report to Markdown and drop it into a matter as
         a draft document. Mirrors WorkflowDocument.send_to_matter visibility."""
+        from django.core.files.base import ContentFile
         from django.db.models import Q
+        from django.utils.text import slugify
 
         from core.models import Document as MatterDocument
-        from core.models import Matter
+        from core.models import DocumentKind, Matter
 
-        from .contracts import render_report_markdown
+        from .contracts import render_report_markdown, render_report_pdf
 
         review = self.get_object()
         if review.status != ContractReviewStatus.DONE:
@@ -809,10 +907,22 @@ class ContractReviewViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_404_NOT_FOUND)
 
         title = (review.title or (review.result or {}).get('title') or 'Contract review')[:240]
-        body = render_report_markdown(review.title, review.result or {})
-        mdoc = MatterDocument.objects.create(
-            matter=matter, uploader=user, title=title, body=body, kind='draft',
+        result = review.result or {}
+        # Attach the formatted PDF as a real document; keep the Markdown as a
+        # text fallback in the body. Fall back to a Markdown draft if the PDF
+        # build ever fails so a "send" never hard-errors.
+        mdoc = MatterDocument(
+            matter=matter, uploader=user, title=title,
+            body=render_report_markdown(review.title, result),
         )
+        try:
+            pdf = render_report_pdf(review.title, result)
+            fname = f'{slugify(title) or "contract-review"}.pdf'
+            mdoc.kind = DocumentKind.DOCUMENT
+            mdoc.file.save(fname, ContentFile(pdf), save=False)
+        except Exception:  # noqa: BLE001 — degrade to a Markdown draft, never 500
+            mdoc.kind = DocumentKind.DRAFT
+        mdoc.save()
         review.sent_matter = matter
         review.sent_document = mdoc
         review.sent_at = timezone.now()

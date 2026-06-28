@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, BookText, Check, Copy, Download, FileDown, FileText, FolderOpen, Loader2,
-  MessageSquare, PanelRightClose, PanelRightOpen, Paperclip, Plus, Send, ShieldCheck,
+  MessageSquare, PanelRightClose, PanelRightOpen, Paperclip, Plus, Printer, Send, ShieldCheck,
   Sparkles, Trash2, User as UserIcon, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -45,6 +45,25 @@ function downloadText(filename: string, text: string, type: string) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// The researcher wraps a drafted document with chat commentary (procedural
+// notes, checklists, caveats, a closing question). For a clean PDF we keep only
+// the document and drop that trailing advisory matter + decorative emoji.
+const ADVISORY_HEADING =
+  /\n\s*(?:#{1,6}\s*|\*\*\s*)?(ADDITIONAL PROCEDURAL NOTES|PROCEDURAL NOTES|VERIFICATION CHECKLIST|IMPORTANT CAVEATS?|PRACTITIONER'?S? NOTES?|CAVEATS?|DISCLAIMER|NOTES? TO (?:THE )?PRACTITIONER|GENERAL NOTES|EXPLANATION|COMMENTARY)\b/i;
+const CLOSING_OFFER =
+  /\n+\s*(?:Would you like me to|Let me know|Shall I|Do you want me to|Feel free to|I can also|If you'?d like|Please let me know)[\s\S]*$/i;
+
+function documentFromAnswer(md: string): string {
+  let text = (md || '').replace(/\r\n/g, '\n');
+  const m = text.match(ADVISORY_HEADING);
+  if (m && m.index !== undefined && m.index > text.length * 0.25) {
+    text = text.slice(0, m.index);
+  }
+  text = text.replace(CLOSING_OFFER, '');
+  text = text.replace(/[✅✔❌⚠️🔴🟢🟡]/g, '');
+  return text.trim() || md;
 }
 
 const KIND_ORDER: CorpusKind[] = ['case', 'judgement', 'rules', 'constitution', 'statute'];
@@ -372,7 +391,7 @@ function MessageBubble({ msg, onSaveDoc }: { msg: Msg; onSaveDoc: (content: stri
       <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-line bg-white px-4 py-2.5 shadow-sm">
         {msg.content ? (
           <>
-            <Markdown size="sm">{msg.content}</Markdown>
+            <Markdown size="sm" className="font-draft">{msg.content}</Markdown>
             {!msg.streaming && <AnswerToolbar content={msg.content} onSaveDoc={onSaveDoc} />}
           </>
         ) : (
@@ -386,17 +405,34 @@ function MessageBubble({ msg, onSaveDoc }: { msg: Msg; onSaveDoc: (content: stri
 }
 
 function AnswerToolbar({ content, onSaveDoc }: { content: string; onSaveDoc: (content: string) => void }) {
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   function copy() {
     navigator.clipboard?.writeText(content).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
   }
+  async function downloadPdf() {
+    setPdfBusy(true);
+    try {
+      const clean = documentFromAnswer(content);
+      const title = (clean.split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') || 'AI-Researcher answer').slice(0, 120);
+      await workflowDocuments.renderPdf(title, clean);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not generate the PDF.');
+    } finally {
+      setPdfBusy(false);
+    }
+  }
   const btn = 'inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-muted transition hover:bg-canvas hover:text-ink';
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line pt-2">
       <button onClick={copy} className={btn}>{copied ? <Check size={12} /> : <Copy size={12} />}{copied ? 'Copied' : 'Copy'}</button>
+      <button onClick={downloadPdf} disabled={pdfBusy} className={btn}>
+        {pdfBusy ? <Loader2 size={12} className="animate-spin" /> : <Printer size={12} />} PDF
+      </button>
       <button onClick={() => downloadText('answer.md', content, 'text/markdown;charset=utf-8')} className={btn}><Download size={12} /> .md</button>
       <button onClick={() => downloadText('answer.txt', content, 'text/plain;charset=utf-8')} className={btn}><FileDown size={12} /> .txt</button>
       <button onClick={() => onSaveDoc(content)} className={btn}><FileText size={12} /> Save as document</button>

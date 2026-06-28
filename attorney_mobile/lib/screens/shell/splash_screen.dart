@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
@@ -20,6 +21,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     _slog('initState — scheduling postFrameCallback');
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _slog('postFrame fired — calling refresh()');
+      // Load the onboarding flag so the router can route first-time users to
+      // the carousel before login.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (mounted) {
+          ref.read(onboardingSeenProvider.notifier).state =
+              prefs.getBool('seen_onboarding') ?? false;
+        }
+      } catch (_) {/* default stays true → skip onboarding on error */}
       final notifier = ref.read(authProvider.notifier);
       try {
         await notifier.refresh().timeout(const Duration(seconds: 8));

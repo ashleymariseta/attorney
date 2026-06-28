@@ -412,6 +412,12 @@ def _lawyer_client_summaries(lawyer, request):
 class MatterViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = Matter.objects.none()
+    # Enables ``?search=`` over the matter + its client (results stay paginated,
+    # so the client never has to pull the whole book of matters).
+    search_fields = [
+        'title', 'practice_area', 'jurisdiction',
+        'client__first_name', 'client__last_name', 'client__email',
+    ]
 
     def get_serializer_class(self):
         return MatterCreateSerializer if self.action == 'create' else MatterSerializer

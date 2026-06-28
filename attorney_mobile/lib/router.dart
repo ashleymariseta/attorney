@@ -25,6 +25,7 @@ import 'screens/lawyers/lawyers_screen.dart';
 import 'screens/matters/matter_screen.dart';
 import 'screens/matters/matters_list_screen.dart';
 import 'screens/my_lawyers/my_lawyers_screen.dart';
+import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/public/landing_screen.dart';
 import 'screens/public/privacy_screen.dart';
 import 'screens/public/terms_screen.dart';
@@ -40,6 +41,7 @@ void _rlog(String m) => debugPrint('[router] $m');
 /// every other route is auth-gated.
 class Routes {
   static const splash = '/';
+  static const onboarding = '/onboarding';
   static const landing = '/landing';
   static const login = '/login';
   static const register = '/register';
@@ -80,6 +82,7 @@ const bool kAiWorkflowsEnabled = false;
 
 final _publicRoutes = <String>{
   Routes.splash,
+  Routes.onboarding,
   Routes.landing,
   Routes.login,
   Routes.register,
@@ -119,19 +122,26 @@ final routerProvider = Provider<GoRouter>((ref) {
         return Routes.dashboard;
       }
       // Once auth resolves, leave the splash route regardless of branch.
+      // First-time anonymous visitors see the onboarding carousel.
       if (going == Routes.splash) {
-        return status == AuthStatus.authed ? Routes.dashboard : Routes.login;
+        if (status == AuthStatus.authed) return Routes.dashboard;
+        return ref.read(onboardingSeenProvider) ? Routes.login : Routes.onboarding;
       }
       if (status == AuthStatus.anonymous && !_isPublic(going)) {
         return Routes.login;
       }
-      if (status == AuthStatus.authed && (going == Routes.login || going == Routes.register || going == Routes.landing)) {
+      if (status == AuthStatus.authed &&
+          (going == Routes.login ||
+              going == Routes.register ||
+              going == Routes.landing ||
+              going == Routes.onboarding)) {
         return Routes.dashboard;
       }
       return null;
     },
     routes: [
       GoRoute(path: Routes.splash, builder: (_, __) => const SplashScreen()),
+      GoRoute(path: Routes.onboarding, builder: (_, __) => const OnboardingScreen()),
       GoRoute(path: Routes.landing, builder: (_, __) => const LandingScreen()),
       GoRoute(path: Routes.login, builder: (_, __) => const LoginScreen()),
       GoRoute(path: Routes.register, builder: (_, __) => const RegisterScreen()),

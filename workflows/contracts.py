@@ -191,3 +191,166 @@ def render_report_markdown(title: str, result: dict) -> str:
     out.append('---')
     out.append('_AI-generated analysis, reviewed by counsel — not a substitute for full legal review._')
     return '\n'.join(out)
+
+
+# ---------------------------------------------------------------------------
+# PDF report — the same formatted document the lawyer downloads, generated
+# server-side (reportlab) so it can be attached to a matter as a real file.
+# ---------------------------------------------------------------------------
+
+RISK_HEX = {'high': '#e11d48', 'medium': '#f59e0b', 'low': '#10b981'}
+
+
+def _risk_color(risk):
+    from reportlab.lib import colors
+    return colors.HexColor(RISK_HEX.get((risk or '').lower(), '#999999'))
+
+
+def _heatmap_flowable():
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Flowable
+
+    class HeatMap(Flowable):
+        """A wrapping grid of risk-coloured rounded squares (the heat map)."""
+
+        def __init__(self, risks, box=4.2 * mm, gap=1.4 * mm):
+            super().__init__()
+            self.risks = list(risks)
+            self.box = box
+            self.gap = gap
+            self.per_row = 1
+            self.width = 0
+            self.height = 0
+
+        def wrap(self, avail_w, avail_h):
+            step = self.box + self.gap
+            self.per_row = max(1, int((avail_w + self.gap) // step))
+            rows = (len(self.risks) + self.per_row - 1) // self.per_row if self.risks else 0
+            self.width = avail_w
+            self.height = max(0, rows * step - self.gap)
+            return (self.width, self.height)
+
+        def draw(self):
+            c = self.canv
+            step = self.box + self.gap
+            for i, rk in enumerate(self.risks):
+                col, row = i % self.per_row, i // self.per_row
+                x = col * step
+                y = self.height - (row + 1) * step + self.gap
+                c.setFillColor(_risk_color(rk))
+                c.roundRect(x, y, self.box, self.box, 1.0, fill=1, stroke=0)
+
+    return HeatMap
+
+
+def render_report_pdf(title: str, result: dict) -> bytes:
+    """Render the contract-review report as a formatted A4 PDF — title, overall
+    risk, heat map, parties, summary, then each section (risk-accented) with its
+    issues and recommended fixes. Mirrors the on-screen / downloadable report."""
+    import html
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    )
+
+    result = result or {}
+    sections = result.get('sections') or []
+    counts = {'high': 0, 'medium': 0, 'low': 0}
+    for s in sections:
+        r = (s.get('risk') or '').lower()
+        if r in counts:
+            counts[r] += 1
+
+    def esc(v):
+        return html.escape(str(v if v is not None else ''))
+
+    from .docpdf import FONT, FONT_BOLD, FONT_ITALIC
+
+    base = getSampleStyleSheet()['Normal']
+    body = ParagraphStyle('body', parent=base, fontName=FONT, fontSize=10.5, leading=15)
+    h1 = ParagraphStyle('h1', parent=body, fontName=FONT_BOLD, fontSize=18, leading=22,
+                        alignment=TA_LEFT, spaceAfter=4)
+    meta = ParagraphStyle('meta', parent=body, fontSize=9, textColor=colors.HexColor('#444444'))
+    label = ParagraphStyle('label', parent=meta, fontSize=8, textColor=colors.HexColor('#666666'))
+    h2 = ParagraphStyle('h2', parent=body, fontName=FONT_BOLD, fontSize=12.5, leading=16,
+                        spaceBefore=12, spaceAfter=2)
+    quote = ParagraphStyle('quote', parent=body, fontName=FONT_ITALIC, fontSize=9.5, leading=13,
+                           leftIndent=10, textColor=colors.HexColor('#555555'), spaceBefore=3, spaceAfter=3)
+    issue = ParagraphStyle('issue', parent=body, fontSize=10, leading=14, spaceBefore=4, leftIndent=2)
+    fix = ParagraphStyle('fix', parent=body, fontSize=9.5, leading=13, leftIndent=14,
+                         textColor=colors.HexColor('#444444'))
+    foot = ParagraphStyle('foot', parent=meta, fontSize=8, textColor=colors.HexColor('#777777'))
+
+    story = []
+    doc_title = title or result.get('title') or 'Contract review'
+    story.append(Paragraph(esc(doc_title), h1))
+
+    overall = (result.get('overall_risk') or '').lower()
+    story.append(Paragraph(
+        f'<b><font color="{RISK_HEX.get(overall, "#999999")}">{esc(overall).upper() or "—"} RISK</font></b>'
+        f'  &nbsp;·&nbsp;  {counts["high"]} high &nbsp; {counts["medium"]} medium &nbsp; {counts["low"]} low',
+        meta,
+    ))
+    if result.get('parties'):
+        story.append(Paragraph(f'<b>Parties:</b> {esc(" · ".join(str(p) for p in result["parties"]))}', meta))
+
+    if sections:
+        story.append(Spacer(1, 7))
+        story.append(Paragraph('HEAT MAP', label))
+        story.append(Spacer(1, 3))
+        story.append(_heatmap_flowable()([s.get('risk') for s in sections]))
+
+    if result.get('summary'):
+        story.append(Spacer(1, 9))
+        story.append(Paragraph(esc(result['summary']), body))
+
+    for s in sections:
+        risk = (s.get('risk') or '').lower()
+        head = Paragraph(
+            f'{esc(s.get("heading") or "Section")}'
+            f'  <font size="8" color="{RISK_HEX.get(risk, "#999999")}"><b>· {esc(risk).upper()} RISK</b></font>',
+            h2,
+        )
+        # A thin coloured left bar beside the heading, like the on-screen accent.
+        bar = Table([['', head]], colWidths=[2.4, None])
+        bar.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, 0), _risk_color(risk)),
+            ('LEFTPADDING', (0, 0), (0, 0), 0), ('RIGHTPADDING', (0, 0), (0, 0), 0),
+            ('LEFTPADDING', (1, 0), (1, 0), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        story.append(bar)
+
+        if s.get('summary'):
+            story.append(Paragraph(esc(s['summary']), body))
+        if s.get('excerpt'):
+            story.append(Paragraph(f'“{esc(s["excerpt"])}”', quote))
+        for it in (s.get('issues') or []):
+            sev = (it.get('severity') or '').lower()
+            story.append(Paragraph(
+                f'<b><font color="{RISK_HEX.get(sev, "#999999")}">[{esc(sev).upper()}]</font></b> '
+                f'{esc(it.get("issue"))}',
+                issue,
+            ))
+            if it.get('recommendation'):
+                story.append(Paragraph(f'<i>Fix:</i> {esc(it["recommendation"])}', fix))
+
+    story.append(Spacer(1, 14))
+    story.append(HRFlowable(width='100%', thickness=0.5, color=colors.HexColor('#cccccc')))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph('AI-generated analysis, reviewed by counsel — not a substitute for full legal review.', foot))
+
+    buf = BytesIO()
+    SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=16 * mm, rightMargin=16 * mm,
+        title=doc_title,
+    ).build(story)
+    return buf.getvalue()

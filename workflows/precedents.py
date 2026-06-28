@@ -34,9 +34,28 @@ def render_precedent(body: str, values: dict) -> str:
 TEMPLATE_SYSTEM_PROMPT = (
     "You are a senior legal drafter for Zimbabwean legal practice. The user "
     "describes a legal document template they need. Produce ONE reusable "
-    "precedent in GitHub-flavoured Markdown, inserting {{placeholders}} "
-    "(snake_case keys) everywhere a drafter must fill in case-specific detail "
-    "— names, dates, case numbers, amounts, addresses, factual paragraphs, etc.\n\n"
+    "precedent in GitHub-flavoured Markdown.\n\n"
+    "PLACEHOLDERS — be very sparing. Insert a {{placeholder}} (snake_case key) "
+    "ONLY where a drafter must supply genuinely case-specific detail: the "
+    "parties' names and addresses, the case number, key dates, the facts, the "
+    "children, property descriptions, sums of money, and the relief sought. "
+    "Prefer a FEW broad placeholders (e.g. one {{grounds}} or {{relief_sought}} "
+    "textarea) over many tiny ones. Most templates need about 8–15 placeholders "
+    "and rarely more than 20.\n"
+    "NEVER create placeholders for the drafting firm's own details or for "
+    "standard form wording. Write the following as ordinary fixed text — and for "
+    "the firm block, a short editable note like '[Firm name, address, telephone, "
+    "email, reference]' the lawyer fills in once — NOT as fill-in placeholders: "
+    "the law firm / legal practitioners' name, address, telephone, fax and "
+    "email; practitioner reference codes; practising-certificate or PC numbers; "
+    "the Registrar / court-registry boilerplate; form numbers; rule citations; "
+    "and the standard recitals and prayers. Do NOT emit keys like law_firm_name, "
+    "law_firm_address, practitioner_ref, practising_certificate_number, "
+    "pc_number or registrar — keep that text standing/verbatim.\n\n"
+    "FORMATTING — separate every paragraph and block with a BLANK line so "
+    "paragraphs render correctly (one blank line between paragraphs). Use a "
+    "numbered list for numbered legal paragraphs. Keep the document professional "
+    "and complete.\n\n"
     "Return ONLY a JSON object (no prose, no code fence) of this exact shape:\n"
     "{\n"
     '  "name": "short title",\n'
@@ -50,9 +69,43 @@ TEMPLATE_SYSTEM_PROMPT = (
     "}\n\n"
     "Every {{placeholder}} used in the body MUST have a matching variable entry "
     'with an identical key. Use type "textarea" for multi-line/paragraph fields, '
-    '"date" for dates, otherwise "text". Keep the document professional and '
-    "complete; do not include commentary."
+    '"date" for dates, otherwise "text". Do not include commentary.'
 )
+
+
+_JSON_ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', 'b': '\b', 'f': '\f', '"': '"', '\\': '\\', '/': '/'}
+
+
+def _json_string_value(text: str, key: str) -> str | None:
+    """Extract the string value of ``"key": "..."`` from (possibly truncated or
+    malformed) JSON, decoding escapes. Stops at the closing quote, or at the end
+    of the text if the response was cut off mid-string. Returns ``None`` if the
+    key isn't present."""
+    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*"', text)
+    if not m:
+        return None
+    i = m.end()
+    out: list[str] = []
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '\\':
+            nxt = text[i + 1] if i + 1 < n else ''
+            if nxt == 'u' and i + 6 <= n:
+                try:
+                    out.append(chr(int(text[i + 2:i + 6], 16)))
+                    i += 6
+                    continue
+                except ValueError:
+                    pass
+            out.append(_JSON_ESCAPES.get(nxt, nxt))
+            i += 2
+            continue
+        if ch == '"':
+            break
+        out.append(ch)
+        i += 1
+    return ''.join(out)
 
 
 def parse_generated_template(text: str) -> dict:
@@ -64,16 +117,29 @@ def parse_generated_template(text: str) -> dict:
     if raw.startswith('```'):
         raw = re.sub(r'^```(?:json)?\s*', '', raw)
         raw = re.sub(r'\s*```$', '', raw)
+
+    data = None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if not m:
-            raise ValueError('Model did not return parseable JSON.')
-        try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError as exc:
-            raise ValueError('Model did not return parseable JSON.') from exc
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                data = None
+
+    # Salvage a truncated/garbled response. The body is the only thing we truly
+    # need — variables are re-derived from its {{placeholders}} below — so pull
+    # out whatever string fields we can even from incomplete JSON.
+    if not isinstance(data, dict) or not str(data.get('body') or '').strip():
+        salvaged = {
+            k: _json_string_value(raw, k)
+            for k in ('name', 'description', 'category', 'matter_type', 'body')
+        }
+        if salvaged.get('body') and salvaged['body'].strip():
+            data = {k: v for k, v in salvaged.items() if v is not None}
+            data['variables'] = []
 
     if not isinstance(data, dict) or not str(data.get('body') or '').strip():
         raise ValueError('Model did not return a template body.')
