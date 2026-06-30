@@ -192,6 +192,20 @@ class Endpoints {
     }
   }
 
+  /// Exchange a Google ID token for our JWT pair (signs in / signs up).
+  Future<void> googleSignIn(String idToken) async {
+    try {
+      final res = await _d.post('/api/v1/auth/google/', data: {'id_token': idToken});
+      final body = res.data as Map<String, dynamic>;
+      await api.setTokens(
+        access: body['access'] as String,
+        refresh: body['refresh'] as String,
+      );
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   Future<void> register({
     required String email,
     required String password,

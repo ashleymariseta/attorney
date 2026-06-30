@@ -9,6 +9,7 @@ import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/auth_scaffold.dart';
 import '../../widgets/common.dart';
+import '../../widgets/google_auth_button.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -160,6 +161,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           icon: Icon(inOtp ? LucideIcons.checkCircle2 : LucideIcons.logIn, size: 16),
           label: Text(_busy ? 'Working…' : (inOtp ? 'Verify' : 'Log in')),
         ),
+        if (!inOtp) ...[
+          const OrDivider(),
+          GoogleAuthButton(onError: (m) => setState(() => _error = m)),
+        ],
       ],
     );
   }

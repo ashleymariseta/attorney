@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { CalendarCheck } from 'lucide-react';
 import { auth, ApiError } from '@/lib/api';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 
 const ROLES = [
   ['client_individual', 'Client — Individual'],
@@ -43,6 +44,19 @@ function RegisterInner() {
 
   function set(k: keyof typeof form, v: string) {
     setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  async function onGoogle(idToken: string) {
+    setError('');
+    setLoading(true);
+    try {
+      await auth.google(idToken);
+      router.push(next);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -132,6 +146,13 @@ function RegisterInner() {
               {loading ? 'Creating…' : 'Create account'}
             </button>
           </form>
+
+          <div className="my-5 flex items-center gap-3">
+            <span className="h-px flex-1 bg-line" />
+            <span className="text-xs text-muted">or</span>
+            <span className="h-px flex-1 bg-line" />
+          </div>
+          <GoogleSignInButton onCredential={onGoogle} onError={setError} text="signup_with" />
 
           <p className="mt-6 text-sm text-muted">
             Already registered?{' '}

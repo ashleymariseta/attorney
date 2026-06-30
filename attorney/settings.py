@@ -1,8 +1,21 @@
 """Django settings for the Attorney platform."""
+import os
 from datetime import timedelta
 from pathlib import Path
 
 import environ
+
+# Point Python's TLS at certifi's CA bundle. python.org macOS builds often ship
+# without a usable system CA store, which breaks outbound TLS (e.g. SMTP to
+# Gmail) with CERTIFICATE_VERIFY_FAILED. ``setdefault`` leaves real system CAs
+# (Linux/prod) untouched.
+try:
+    import certifi
+
+    os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+    os.environ.setdefault('SSL_CERT_DIR', os.path.dirname(certifi.where()))
+except Exception:  # noqa: BLE001
+    pass
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -242,6 +255,19 @@ DEFAULT_FROM_EMAIL = env.str('DEFAULT_FROM_EMAIL', 'Attorney <no-reply@attorney.
 INVITE_ACCEPT_URL = env.str('INVITE_ACCEPT_URL', 'http://localhost:3000/accept-invite')
 PASSWORD_RESET_URL = env.str('PASSWORD_RESET_URL', 'http://localhost:3000/reset-password')
 EMAIL_VERIFY_URL = env.str('EMAIL_VERIFY_URL', 'http://localhost:3000/verify-email')
+
+# Google Sign-In — the OAuth client IDs we accept as the audience of a Google
+# ID token (web, Android, iOS). Empty entries are filtered out.
+GOOGLE_OAUTH_CLIENT_IDS = [
+    cid for cid in (
+        env.str('GOOGLE_OAUTH_WEB_CLIENT_ID', ''),
+        env.str('GOOGLE_OAUTH_ANDROID_CLIENT_ID', ''),
+        env.str('GOOGLE_OAUTH_IOS_CLIENT_ID', ''),
+    ) if cid
+]
+# Optional: restrict Google sign-in to a single Workspace domain (e.g.
+# "arttoney.com"). Blank allows any Google account.
+GOOGLE_ALLOWED_EMAIL_DOMAIN = env.str('GOOGLE_ALLOWED_EMAIL_DOMAIN', '').strip().lower()
 
 # WhatsApp delivery for 2FA codes. When unset, codes are logged to the console
 # only — wire a real provider (Twilio, Meta Cloud API, etc.) in production.

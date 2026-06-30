@@ -424,6 +424,16 @@ export const auth = {
     setTokens(tok.access, tok.refresh);
     return tok;
   },
+  // Exchange a Google ID token (from Google Identity Services) for our JWTs.
+  async google(idToken: string) {
+    const tok = await api<{ access: string; refresh: string }>(
+      '/api/v1/auth/google/',
+      { method: 'POST', body: JSON.stringify({ id_token: idToken }) },
+      { auth: false }
+    );
+    setTokens(tok.access, tok.refresh);
+    return tok;
+  },
   async logout() {
     const refresh = getRefresh();
     try {
