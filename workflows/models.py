@@ -222,6 +222,8 @@ class LLMProviderConfig(models.Model):
 
     class Meta:
         ordering = ['provider', 'label']
+        verbose_name = 'AI Provider'
+        verbose_name_plural = 'AI Providers'
 
     def __str__(self):
         return f'{self.get_provider_display()} · {self.label or self.default_model}'

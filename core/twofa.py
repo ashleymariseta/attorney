@@ -6,7 +6,6 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.utils import timezone
 
 from .models import OtpChallenge, OtpPurpose, TwoFactorMethod
@@ -59,22 +58,26 @@ def verify_challenge(*, token: str, code: str) -> OtpChallenge:
 
 
 def _deliver(*, user, method: str, code: str, purpose: str) -> None:
-    subject = 'Your Attorney sign-in code' if purpose == OtpPurpose.LOGIN else 'Confirm your Attorney 2FA setup'
+    is_login = purpose == OtpPurpose.LOGIN
+    subject = 'Your Attorney sign-in code' if is_login else 'Confirm your Attorney 2FA setup'
+    heading = 'Your sign-in code' if is_login else 'Confirm your 2FA setup'
     body = (
         f'Your one-time code is: {code}\n\n'
         f'It expires in {OTP_TTL_MINUTES} minutes. If you did not request this, ignore this message.'
     )
     if method == TwoFactorMethod.EMAIL:
-        try:
-            send_mail(
-                subject=subject,
-                message=body,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=True,
-            )
-        except Exception:  # pragma: no cover
-            pass
+        from .emails import send_branded
+        send_branded(
+            to=user.email,
+            subject=subject,
+            heading=heading,
+            paragraphs=[
+                'Enter this code to continue. It expires in '
+                f'{OTP_TTL_MINUTES} minutes.',
+                "If you didn't request this, you can ignore this email.",
+            ],
+            code=code,
+        )
     elif method == TwoFactorMethod.WHATSAPP:
         _whatsapp_send(user=user, body=body)
     # Always emit to the log so devs without a provider can still test.

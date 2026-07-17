@@ -104,6 +104,12 @@ class RegisterAPIView(mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        # Fire the verification email automatically on sign-up.
+        from .emails import send_email_verification
+        send_email_verification(user)
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
@@ -1513,11 +1519,12 @@ class RequestPasswordResetView(APIView):
                 kind=NotificationKind.GENERIC,
                 title='Reset your Attorney password',
                 body=(
-                    'We received a request to reset your password.\n\n'
-                    f'Use this link to choose a new one — it expires in 24 hours:\n{reset_url}\n\n'
-                    'If you did not request this, you can ignore this email.'
+                    'We received a request to reset your password. Use the button '
+                    'below to choose a new one — it expires in 24 hours.\n\n'
+                    'If you did not request this, you can safely ignore this email.'
                 ),
                 link=reset_url,
+                button_label='Reset password',
             )
         return Response({'detail': 'If an account exists with that email, a reset link has been sent.'})
 
@@ -1560,25 +1567,12 @@ class RequestEmailVerifyView(APIView):
     throttle_scope = 'password_reset'
 
     def post(self, request):
-        from django.contrib.auth.tokens import default_token_generator
-        from django.utils.http import urlsafe_base64_encode
-        from django.utils.encoding import force_bytes
+        from .emails import send_email_verification
 
         user = request.user
         if user.email_verified:
             return Response({'detail': 'Email already verified.'}, status=status.HTTP_200_OK)
-        token = default_token_generator.make_token(user)
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        verify_url = f'{dj_settings.EMAIL_VERIFY_URL}?uid={uid}&token={token}'
-        notify(
-            recipient=user,
-            kind=NotificationKind.GENERIC,
-            title='Verify your Attorney email',
-            body=(
-                f'Confirm that {user.email} is yours by clicking the link below:\n{verify_url}'
-            ),
-            link=verify_url,
-        )
+        send_email_verification(user)
         return Response({'detail': 'Verification email sent.'})
 
 
