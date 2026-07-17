@@ -31,14 +31,34 @@ from .serializers import (
 # passed to the model as a focus hint so it knows which sources to reason about.
 LEGAL_SYSTEM_PROMPT = (
     "You are an expert legal research assistant for Zimbabwean legal practice. "
-    "Answer the practitioner's questions clearly and practically, using GitHub-"
-    "flavoured Markdown (headings, **bold**, lists, tables) for structure. "
-    "Reference Zimbabwean statutes (with chapter numbers, e.g. [Chapter 5:07]) "
-    "and decided cases by name where you are confident. Where you are uncertain "
-    "about a citation or the current state of the law, say so explicitly and "
-    "advise the practitioner to verify against the primary source. Never "
-    "fabricate case names, citations, or section numbers."
+    "Answer the practitioner's question directly and substantively from your "
+    "knowledge of Zimbabwean law — give the answer, don't tell them to go look "
+    "it up. Use GitHub-flavoured Markdown (headings, **bold**, lists, tables) "
+    "for structure. Cite Zimbabwean statutes with chapter numbers (e.g. "
+    "[Chapter 5:07]), Statutory Instruments (e.g. SI 33 of 2019) and decided "
+    "cases by name. When the web-search tool is available, use it to confirm the "
+    "current position and cite the sources you relied on. If a specific citation "
+    "or the current state of the law is genuinely uncertain, still give your best "
+    "substantive answer and flag precisely what should be verified against the "
+    "primary source — but do not refuse or ask for clarification on well-known "
+    "matters. Never fabricate case names, citations, or section numbers."
 )
+
+
+def _web_search_tools(config):
+    """Anthropic web-search server tool, when enabled — lets answers cite live
+    sources. Returns None for non-Anthropic providers or when disabled."""
+    from django.conf import settings as dj_settings
+
+    if getattr(config, 'provider', '') != 'anthropic':
+        return None
+    if not getattr(dj_settings, 'CO_RESEARCHER_WEB_SEARCH', False):
+        return None
+    return [{
+        'type': 'web_search_20250305',
+        'name': 'web_search',
+        'max_uses': getattr(dj_settings, 'CO_RESEARCHER_WEB_SEARCH_MAX_USES', 5),
+    }]
 
 _SCOPE_LABELS = {
     'case': 'Cases',
@@ -210,10 +230,12 @@ class CoResearcherAskView(APIView):
 
         messages = _build_messages(data['question'], request.data.get('history'))
         matters_ctx = _matters_context(request.user) if request.data.get('include_matters') else None
+        _tools = _web_search_tools(config)
         try:
             completion = get_provider(config).complete(
                 system=_system_prompt(data.get('scope'), matters_ctx), messages=messages,
                 model=config.default_model or None, user_id=_tenant_pseudo_id(request.user),
+                **({'tools': _tools} if _tools else {}),
             )
         except ProviderError as e:
             credits.release_charge(request.user, hold, 0, note='provider error — refunded')
@@ -297,10 +319,12 @@ class CoResearcherStreamView(APIView):
             adapter = get_provider(config)
             full, tokens_in, tokens_out, model = '', 0, 0, config.default_model
             settled = False
+            _tools = _web_search_tools(config)
             try:
                 for evt in adapter.stream(
                     system=_system_prompt(data.get('scope'), matters_ctx), messages=messages,
                     model=config.default_model or None, user_id=_tenant_pseudo_id(user),
+                    **({'tools': _tools} if _tools else {}),
                 ):
                     if evt['type'] == 'delta':
                         yield _sse({'type': 'delta', 'text': evt['text']})

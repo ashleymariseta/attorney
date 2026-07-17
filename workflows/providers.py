@@ -133,9 +133,10 @@ class ClaudeProvider(BaseLLMProvider):
     """Anthropic Messages API. Docs: https://docs.anthropic.com/."""
 
     name = 'anthropic'
-    default_model = 'claude-opus-4-7'
+    default_model = 'claude-sonnet-5'
 
-    def complete(self, *, system, user=None, model=None, user_id=None, messages=None, max_tokens=4096, timeout=60.0):
+    def complete(self, *, system, user=None, model=None, user_id=None, messages=None,
+                 max_tokens=4096, timeout=60.0, tools=None):
         if not self.config.api_key:
             raise ProviderError('No Anthropic API key configured.')
         model = model or self.config.default_model or self.default_model
@@ -149,6 +150,8 @@ class ClaudeProvider(BaseLLMProvider):
             'system': system,
             'messages': messages or [{'role': 'user', 'content': user or ''}],
         }
+        if tools:
+            payload['tools'] = tools
         if user_id:
             payload['metadata'] = {'user_id': user_id}
         data = self._post_json('https://api.anthropic.com/v1/messages', headers, payload, timeout=timeout)
@@ -166,7 +169,7 @@ class ClaudeProvider(BaseLLMProvider):
             raw=data,
         )
 
-    def stream(self, *, system, user=None, model=None, user_id=None, messages=None):
+    def stream(self, *, system, user=None, model=None, user_id=None, messages=None, tools=None):
         """Stream the Anthropic Messages API (SSE). Yields text deltas, then a
         final ``done`` event carrying the model + token usage."""
         if not self.config.api_key:
@@ -182,6 +185,8 @@ class ClaudeProvider(BaseLLMProvider):
             'model': model, 'max_tokens': 4096, 'stream': True,
             'system': system, 'messages': messages or [{'role': 'user', 'content': user or ''}],
         }
+        if tools:
+            payload['tools'] = tools
         if user_id:
             payload['metadata'] = {'user_id': user_id}
 

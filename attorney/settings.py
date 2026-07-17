@@ -281,7 +281,12 @@ WHATSAPP_API_TOKEN = env.str('WHATSAPP_API_TOKEN', '')
 # Pool calls are rate-limited and token-quota'd per-tenant; BYOK calls are
 # not (the lawyer is paying their own bill).
 LLM_POOL_ANTHROPIC_API_KEY = env.str('LLM_POOL_ANTHROPIC_API_KEY', '')
-LLM_POOL_ANTHROPIC_DEFAULT_MODEL = env.str('LLM_POOL_ANTHROPIC_DEFAULT_MODEL', 'claude-opus-4-7')
+LLM_POOL_ANTHROPIC_DEFAULT_MODEL = env.str('LLM_POOL_ANTHROPIC_DEFAULT_MODEL', 'claude-sonnet-5')
+
+# AI-Researcher: let the model use Anthropic's web-search tool so answers can
+# cite live sources (like claude.ai). Anthropic only; costs per search.
+CO_RESEARCHER_WEB_SEARCH = env.bool('CO_RESEARCHER_WEB_SEARCH', True)
+CO_RESEARCHER_WEB_SEARCH_MAX_USES = env.int('CO_RESEARCHER_WEB_SEARCH_MAX_USES', 5)
 LLM_POOL_OPENAI_API_KEY = env.str('LLM_POOL_OPENAI_API_KEY', '')
 LLM_POOL_OPENAI_BASE_URL = env.str('LLM_POOL_OPENAI_BASE_URL', '')
 LLM_POOL_OPENAI_DEFAULT_MODEL = env.str('LLM_POOL_OPENAI_DEFAULT_MODEL', 'gpt-4o')

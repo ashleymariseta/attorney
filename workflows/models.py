@@ -45,7 +45,7 @@ class WorkflowTemplate(models.Model):
     #:   "purpose": "Capture facts into a structured matrix",
     #:   "retrieval_scope": "none",
     #:   "default_provider": "anthropic",
-    #:   "default_model": "claude-opus-4-7",
+    #:   "default_model": "claude-sonnet-5",
     #:   "prompt_template": "...",
     #: }
     stages = models.JSONField(default=list)
