@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coins, FileSignature, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, ShieldAlert, Users, Wallet, X } from 'lucide-react';
+import BrandLoader from '@/components/BrandLoader';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import VerificationGateModal from '@/components/VerificationGateModal';
 import NotificationBell from '@/components/NotificationBell';
@@ -114,11 +115,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => setOpen(false), [pathname]);
 
   if (!ready) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white text-sm text-muted">
-        Loading workspace…
-      </div>
-    );
+    return <BrandLoader label="Loading workspace" />;
   }
 
   const isLawyer = me?.role === 'lawyer';

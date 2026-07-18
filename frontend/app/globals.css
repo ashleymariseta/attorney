@@ -155,3 +155,54 @@ body {
 .animate-marquee:hover {
   animation-play-state: paused;
 }
+
+/* ── Branded loader (see components/BrandLoader.tsx) ───────────────────── */
+@keyframes brand-loader-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes brand-loader-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.05); }
+}
+@keyframes brand-loader-glow {
+  0%, 100% { opacity: 0.3; transform: scale(0.96); }
+  50%      { opacity: 0.6; transform: scale(1.04); }
+}
+@keyframes brand-loader-shimmer {
+  0%   { background-position: 150% 0; }
+  100% { background-position: -150% 0; }
+}
+@keyframes brand-loader-dots {
+  0%        { content: ''; }
+  25%       { content: '.'; }
+  50%       { content: '..'; }
+  75%, 100% { content: '...'; }
+}
+
+.brand-loader-spin  { animation: brand-loader-spin 1.4s linear infinite; will-change: transform; }
+.brand-loader-pulse { animation: brand-loader-pulse 2.2s ease-in-out infinite; will-change: transform; }
+.brand-loader-glow  { animation: brand-loader-glow 2.2s ease-in-out infinite; }
+.brand-loader-shimmer {
+  background-image: linear-gradient(90deg, #64748b 0%, #64748b 38%, #0f766e 50%, #64748b 62%, #64748b 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: brand-loader-shimmer 2.4s linear infinite;
+}
+.brand-loader-dots::after {
+  content: '';
+  animation: brand-loader-dots 1.4s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader-spin,
+  .brand-loader-pulse,
+  .brand-loader-glow,
+  .brand-loader-shimmer,
+  .brand-loader-dots::after {
+    animation: none;
+  }
+  .brand-loader-shimmer { color: #64748b; }
+  .brand-loader-dots::after { content: '…'; }
+}
