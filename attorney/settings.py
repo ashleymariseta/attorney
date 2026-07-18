@@ -198,9 +198,12 @@ CSRF_TRUSTED_ORIGINS = [
     origin.strip() for origin in env('CSRF_TRUSTED_ORIGINS').split(',') if origin.strip()
 ]
 
-# Channel layer — defaults to in-memory for dev (no extra services). Set
-# CHANNEL_BACKEND=redis (and a working REDIS_URL) to scale across workers.
-if env.str('CHANNEL_BACKEND', 'memory') == 'redis':
+# Channel layer. In-memory is fine for a single-process dev server, but it is
+# per-process — with multiple workers (prod runs several Uvicorn workers) a
+# broadcast from one worker never reaches sockets held by another, so live
+# updates silently stop. Default to Redis in production (REDIS_URL is already
+# required for Celery); dev stays in-memory. Override with CHANNEL_BACKEND.
+if env.str('CHANNEL_BACKEND', 'memory' if DEBUG else 'redis') == 'redis':
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
