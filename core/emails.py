@@ -41,6 +41,19 @@ def _button(label: str, url: str) -> str:
     </table>"""
 
 
+def _highlight(eyebrow: str, value: str) -> str:
+    # A teal-accented card used to feature a single key detail (e.g. the matter).
+    return f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+      <tr><td style="background:{_CANVAS};border-left:4px solid {_BRAND};border-radius:8px;padding:14px 18px;">
+        <span style="display:block;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;
+                     letter-spacing:1.5px;color:{_MUTED};text-transform:uppercase;">{_esc(eyebrow)}</span>
+        <span style="display:block;margin-top:4px;font-family:Arial,Helvetica,sans-serif;font-size:17px;
+                     font-weight:bold;color:{_INK};">{_esc(value)}</span>
+      </td></tr>
+    </table>"""
+
+
 def _code_block(code: str) -> str:
     return f"""
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0;">
@@ -57,6 +70,7 @@ def render_email(
     paragraphs: list[str],
     button: tuple[str, str] | None = None,
     code: str | None = None,
+    highlight: tuple[str, str] | None = None,
     preheader: str = '',
 ) -> tuple[str, str]:
     """Return (html, plain_text) for a branded email."""
@@ -66,6 +80,8 @@ def render_email(
             f'<p style="margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;'
             f'font-size:15px;line-height:1.6;color:{_INK};">{_esc(p)}</p>'
         )
+    if highlight:
+        body_bits.append(_highlight(highlight[0], highlight[1]))
     if code:
         body_bits.append(_code_block(code))
     if button:
@@ -118,6 +134,8 @@ def render_email(
     # Plain-text alternative.
     text_lines = [heading, '']
     text_lines += paragraphs
+    if highlight:
+        text_lines += ['', f'{highlight[0]}: {highlight[1]}']
     if code:
         text_lines += ['', f'Code: {code}']
     if button:
@@ -135,6 +153,7 @@ def send_branded(
     paragraphs: list[str],
     button: tuple[str, str] | None = None,
     code: str | None = None,
+    highlight: tuple[str, str] | None = None,
 ) -> bool:
     """Send a branded HTML email (with plain-text fallback). Returns True on
     success; never raises."""
@@ -142,7 +161,7 @@ def send_branded(
         return False
     html, text = render_email(
         heading=heading, paragraphs=paragraphs, button=button, code=code,
-        preheader=paragraphs[0] if paragraphs else subject,
+        highlight=highlight, preheader=paragraphs[0] if paragraphs else subject,
     )
     try:
         msg = EmailMultiAlternatives(
@@ -185,6 +204,32 @@ def send_email_verification(user) -> bool:
             'This link expires in 24 hours.',
         ],
         button=('Verify my email', _verify_url_for(user)),
+    )
+
+
+def send_matter_invite(*, client, lawyer, matter_title: str, accept_url: str) -> bool:
+    """Send the designed 'you've been invited to a matter' email. No-op for
+    phone-only invites (placeholder email). Returns True on success."""
+    if not client.email or '@invite.attorney.local' in client.email:
+        return False
+    name = (getattr(client, 'first_name', '') or '').strip()
+    lawyer_label = ''
+    if lawyer is not None:
+        lawyer_label = (lawyer.get_full_name() or '').strip() or (lawyer.email or '')
+    lawyer_label = lawyer_label or 'Your lawyer'
+    return send_branded(
+        to=client.email,
+        subject=f'{lawyer_label} invited you to a matter on {_BRAND_NAME}',
+        heading=f'You’re invited{f", {name}" if name else ""}',
+        paragraphs=[
+            f'{lawyer_label} has opened a private legal matter for you on {_BRAND_NAME} '
+            f'and invited you to join.',
+            'Accept the invitation to set your password. You’ll then be able to message '
+            'your lawyer, share documents securely, and follow every update in one place.',
+            'This invitation is personal to you — please don’t forward it.',
+        ],
+        highlight=('Matter', matter_title),
+        button=('Accept invitation & set password', accept_url),
     )
 
 

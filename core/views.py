@@ -593,7 +593,9 @@ class MatterViewSet(viewsets.ModelViewSet):
                 sent_to_phone=getattr(client, 'phone_number', '') or '',
             )
             accept_url = f"{dj_settings.INVITE_ACCEPT_URL}?token={token}"
-            notify(
+            # In-app notification only — the bespoke invite email is sent below
+            # (send_email=False avoids the generic notify template).
+            notif = notify(
                 recipient=client,
                 kind=NotificationKind.INVITE,
                 title=f'{lawyer_label} invited you to a matter',
@@ -602,7 +604,14 @@ class MatterViewSet(viewsets.ModelViewSet):
                     f'Set a password and join the room: {accept_url}'
                 ),
                 link=accept_url,
+                send_email=False,
             )
+            from .emails import send_matter_invite
+            if send_matter_invite(
+                client=client, lawyer=request.user, matter_title=title, accept_url=accept_url
+            ):
+                notif.sent_email = True
+                notif.save(update_fields=['sent_email'])
         else:
             notify(
                 recipient=client,
@@ -1752,6 +1761,10 @@ class AcceptInviteView(APIView):
             user.email = email
         user.set_password(password)
         user.is_verified = True
+        # They arrived via a link sent to their inbox, so if they're keeping the
+        # invited address treat the email as verified (skip the verify banner).
+        if invite.sent_to_email and user.email and invite.sent_to_email.lower() == user.email.lower():
+            user.email_verified = True
         user.save()
         invite.accepted_at = timezone.now()
         invite.save(update_fields=['accepted_at'])
