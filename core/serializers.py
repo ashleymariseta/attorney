@@ -27,6 +27,11 @@ class FirmSerializer(serializers.ModelSerializer):
 
 
 class LawyerProfileSerializer(serializers.ModelSerializer):
+    # True once the practitioner has supplied their bar number, practising
+    # certificate number and uploaded the certificate — the app gates lawyers
+    # behind a blocking verification modal until this is set.
+    credentials_submitted = serializers.SerializerMethodField()
+
     class Meta:
         model = LawyerProfile
         fields = [
@@ -44,7 +49,15 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
             'consultation_price',
             'bio',
             'verified_at',
+            'credentials_submitted',
         ]
+
+    def get_credentials_submitted(self, obj):
+        return bool(
+            obj.bar_number
+            and obj.practising_certificate_number
+            and obj.practising_certificate_file
+        )
 
 
 class ClientProfileSerializer(serializers.ModelSerializer):

@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { CalendarCheck, Sparkles } from 'lucide-react';
 import { auth, ApiError } from '@/lib/api';
-import GoogleSignInButton from '@/components/GoogleSignInButton';
+import GoogleSignInButton, { googleEnabled } from '@/components/GoogleSignInButton';
 
 function safeNext(raw: string | null): string {
   // Only allow same-origin relative redirects.
@@ -173,18 +173,19 @@ function LoginInner() {
 
           {!twoFa && (
             <>
-              <div className="my-5 flex items-center gap-3">
-                <span className="h-px flex-1 bg-line" />
-                <span className="text-xs text-muted">or</span>
-                <span className="h-px flex-1 bg-line" />
-              </div>
-              <GoogleSignInButton onCredential={onGoogle} onError={setError} text="continue_with" />
+              {googleEnabled && (
+                <>
+                  <div className="my-5 flex items-center gap-3">
+                    <span className="h-px flex-1 bg-line" />
+                    <span className="text-xs text-muted">or</span>
+                    <span className="h-px flex-1 bg-line" />
+                  </div>
+                  <GoogleSignInButton onCredential={onGoogle} onError={setError} text="continue_with" />
+                </>
+              )}
               <p className="mt-6 text-sm text-muted">
                 No account?{' '}
                 <Link href={registerHref} className="font-semibold text-brand underline underline-offset-2">Create one</Link>
-              </p>
-              <p className="mt-4 rounded-lg bg-canvas px-3 py-2 text-xs text-muted">
-                Demo client: <span className="font-mono">client@attorney.test</span> / <span className="font-mono">ClientPass123!</span>
               </p>
             </>
           )}

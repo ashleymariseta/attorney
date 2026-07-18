@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coins, FileSignature, FileText, GraduationCap, Home, KeyRound, Mail, Menu, Plus, Search, Settings, ShieldAlert, Users, Wallet, X } from 'lucide-react';
 import CreateMatterModal from '@/components/CreateMatterModal';
+import VerificationGateModal from '@/components/VerificationGateModal';
 import NotificationBell from '@/components/NotificationBell';
 import { emailVerify, ApiError } from '@/lib/api';
 import { useToast } from '@/components/Toast';
@@ -330,6 +331,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           onCreated={() => reloadMatters()}
         />
       )}
+      <VerificationGateModal me={me} reloadMe={reloadMe} />
     </Ctx.Provider>
   );
 }

@@ -4,6 +4,10 @@ import { useEffect, useRef } from 'react';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 
+/** True when NEXT_PUBLIC_GOOGLE_CLIENT_ID is baked into this build. Pages use
+ * it to hide the "or" divider so nothing dangles when Google isn't set up. */
+export const googleEnabled = !!process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
 // Minimal typing for the Google Identity Services global.
 declare global {
   interface Window {
@@ -56,10 +60,10 @@ export default function GoogleSignInButton({
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   useEffect(() => {
-    if (!clientId) {
-      onError?.('Google sign-in is not configured.');
-      return;
-    }
+    // No client ID baked into this build → Google sign-in isn't set up in this
+    // environment. That's a deployment-config state, not a user error, so we
+    // render nothing silently instead of showing a scary banner.
+    if (!clientId) return;
     let cancelled = false;
     loadGis()
       .then(() => {

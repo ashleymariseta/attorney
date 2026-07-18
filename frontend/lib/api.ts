@@ -141,6 +141,12 @@ export interface User {
   email_verified?: boolean;
   two_factor_method?: 'off' | 'email' | 'whatsapp';
   avatar_url?: string | null;
+  lawyer_profile?: {
+    credentials_submitted: boolean;
+    bar_number?: string;
+    practising_certificate_number?: string;
+    practising_certificate_expires?: string | null;
+  } | null;
 }
 export interface MiniUser {
   id: number;
@@ -823,6 +829,11 @@ export const lawyerProfile = {
   uploadCertificate(file: File) {
     const form = new FormData();
     form.append('practising_certificate_file', file);
+    return api<LawyerProfileEdit>('/api/v1/me/lawyer-profile/', { method: 'PATCH', body: form });
+  },
+  /** Multipart PATCH used by the blocking verification gate — sends the
+   * credential fields and the certificate file in a single request. */
+  submitVerification(form: FormData) {
     return api<LawyerProfileEdit>('/api/v1/me/lawyer-profile/', { method: 'PATCH', body: form });
   },
 };
