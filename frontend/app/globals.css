@@ -11,6 +11,11 @@ body {
   background-color: #ffffff;
   color: #0d1716;
   -webkit-font-smoothing: antialiased;
+  /* Never let a stray wide element make the page pan sideways into empty
+     space (which pushes the mobile nav off-screen). Content that genuinely
+     needs to scroll horizontally uses its own overflow-x container. */
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 @layer components {

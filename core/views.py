@@ -1125,6 +1125,14 @@ class TransactionsView(APIView):
         assigned_matter_ids = set(
             Matter.objects.filter(lawyers=user).values_list('id', flat=True)
         )
+        # A verified payment posts a matching trust deposit (Payment.trust_transaction).
+        # That deposit is the same money as the payment, so showing both makes one
+        # $45 fee look like two $45 lines. Collect the mirrored deposit ids and hide
+        # them from the list (escrow total below still counts them).
+        mirror_trust_ids = set()
+        for p in payments:
+            if p.trust_transaction_id:
+                mirror_trust_ids.add(p.trust_transaction_id)
         for p in payments:
             can_review = admin or p.matter_id in assigned_matter_ids
             proof_url = ''
@@ -1156,7 +1164,11 @@ class TransactionsView(APIView):
                 'status_display': p.get_status_display(),
                 'created_at': p.created_at,
             })
-        for t in trust:
+        trust_list = list(trust)
+        for t in trust_list:
+            # Skip the deposit that merely mirrors a payment row (see above).
+            if t.id in mirror_trust_ids:
+                continue
             items.append({
                 'id': f'trust-{t.id}',
                 'kind': 'trust',
@@ -1171,8 +1183,10 @@ class TransactionsView(APIView):
             })
         items.sort(key=lambda x: x['created_at'], reverse=True)
 
+        # Escrow held = all completed trust movements, including the mirrored
+        # deposits we hid from the list above.
         total_in = sum(
-            (Decimal(i['amount']) for i in items if i['kind'] == 'trust' and i['status'] == 'completed'),
+            (Decimal(str(t.amount)) for t in trust_list if t.status == 'completed'),
             Decimal('0'),
         )
         return Response({'count': len(items), 'total_escrow': str(total_in), 'results': items})

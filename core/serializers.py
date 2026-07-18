@@ -39,6 +39,7 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
             'firm',
             'bar_number',
             'practising_certificate_number',
+            'practising_certificate_issued',
             'practising_certificate_expires',
             'country',
             'jurisdictions',
@@ -53,11 +54,9 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
         ]
 
     def get_credentials_submitted(self, obj):
-        return bool(
-            obj.bar_number
-            and obj.practising_certificate_number
-            and obj.practising_certificate_file
-        )
+        # Bar / roll number is optional — a certificate number + uploaded
+        # certificate is what clears the verification gate.
+        return bool(obj.practising_certificate_number and obj.practising_certificate_file)
 
 
 class ClientProfileSerializer(serializers.ModelSerializer):
@@ -399,16 +398,19 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
     class Meta:
         model = LawyerProfile
         fields = [
-            'bar_number', 'practising_certificate_number', 'practising_certificate_expires',
+            'bar_number', 'practising_certificate_number',
+            'practising_certificate_issued', 'practising_certificate_expires',
             'practising_certificate_file', 'practising_certificate_file_url',
             'country', 'jurisdictions', 'practice_areas', 'languages',
             'years_experience', 'hourly_rate', 'hourly_rate_min', 'hourly_rate_max',
             'consultation_price', 'bio',
             'firm', 'firm_detail',
         ]
+        # years_experience is derived from practising_certificate_issued on save,
+        # so the client can't set it directly.
         read_only_fields = [
             'firm', 'practising_certificate_file_url',
-            'hourly_rate_min', 'hourly_rate_max',
+            'hourly_rate_min', 'hourly_rate_max', 'years_experience',
         ]
         extra_kwargs = {'practising_certificate_file': {'write_only': True, 'required': False, 'allow_null': True}}
 

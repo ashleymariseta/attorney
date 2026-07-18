@@ -7,6 +7,7 @@ import {
   ArrowRight,
   BadgeCheck,
   Briefcase,
+  CalendarClock,
   Building2,
   ChevronDown,
   Globe2,
@@ -26,13 +27,16 @@ import {
   ApiError,
   auth,
   clearTokens,
+  consultations as consultationsApi,
   firms as firmsApi,
   isAuthed,
   lawyers as lawyersApi,
   retainers as retainersApi,
+  type Consultation,
   type FirmCard,
   type Lawyer,
 } from '@/lib/api';
+import { RescheduleModal } from '@/components/MatterModals';
 import { useToast } from '@/components/Toast';
 import { countryName, flagFor } from '@/lib/flag';
 import PublicHeader from '@/components/PublicHeader';
@@ -75,6 +79,9 @@ export default function PublicLawyersPage() {
 
   // for in-app authed users, opening the book modal directly
   const [bookFor, setBookFor] = useState<Lawyer | null>(null);
+  // existing bookings, so we can offer "Reschedule" instead of "Book"
+  const [myConsults, setMyConsults] = useState<Consultation[]>([]);
+  const [rescheduling, setRescheduling] = useState<Consultation | null>(null);
 
   // shell selection — sidebar+nav when authed, marketing chrome when not.
   // We verify the token by hitting /me; a stale token must not block public
@@ -93,12 +100,31 @@ export default function PublicLawyersPage() {
         const me = await auth.me();
         setMeRole(me.role);
         setAuthMode('authed');
+        try {
+          setMyConsults((await consultationsApi.list()).results);
+        } catch {}
       } catch {
         clearTokens();
         setAuthMode('public');
       }
     })();
   }, []);
+
+  const refreshConsults = async () => {
+    try {
+      setMyConsults((await consultationsApi.list()).results);
+    } catch {}
+  };
+
+  // Most recent still-active booking with a given lawyer (if any) — drives the
+  // "Reschedule booking" affordance in place of "Book consultation".
+  const DEAD_STATUSES = new Set(['cancelled', 'completed', 'declined', 'expired']);
+  function activeBookingWith(lawyerId: number): Consultation | null {
+    const matches = myConsults
+      .filter((c) => c.lawyer_detail?.id === lawyerId && !DEAD_STATUSES.has(c.status))
+      .sort((a, b) => new Date(b.scheduled_time).getTime() - new Date(a.scheduled_time).getTime());
+    return matches[0] ?? null;
+  }
 
   // Only clients can keep lawyers on retainer.
   const isClient = meRole?.startsWith('client') ?? false;
@@ -512,13 +538,26 @@ export default function PublicLawyersPage() {
                   >
                     View profile
                   </Link>
-                  <button
-                    onClick={() => bookLawyer(l)}
-                    className="inline-flex items-center justify-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand"
-                  >
-                    Book consultation
-                    <ArrowRight size={14} />
-                  </button>
+                  {(() => {
+                    const existing = activeBookingWith(l.id);
+                    return existing ? (
+                      <button
+                        onClick={() => setRescheduling(existing)}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand"
+                      >
+                        Reschedule booking
+                        <CalendarClock size={14} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => bookLawyer(l)}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand"
+                      >
+                        Book consultation
+                        <ArrowRight size={14} />
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
@@ -552,7 +591,26 @@ export default function PublicLawyersPage() {
           <div className="mt-5">{searchBar}</div>
         </div>
         {directoryBody}
-        {bookFor && <BookModal lawyer={bookFor} onClose={() => setBookFor(null)} />}
+        {bookFor && (
+          <BookModal
+            lawyer={bookFor}
+            onClose={() => {
+              setBookFor(null);
+              refreshConsults();
+            }}
+          />
+        )}
+        {rescheduling && (
+          <RescheduleModal
+            consultation={rescheduling}
+            onClose={() => setRescheduling(null)}
+            onDone={() => {
+              setRescheduling(null);
+              refreshConsults();
+              toast.success('Consultation rescheduled — your lawyer will re-confirm.', { major: true });
+            }}
+          />
+        )}
       </AppShell>
     );
   }

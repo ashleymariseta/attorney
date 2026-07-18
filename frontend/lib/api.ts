@@ -145,7 +145,10 @@ export interface User {
     credentials_submitted: boolean;
     bar_number?: string;
     practising_certificate_number?: string;
+    practising_certificate_issued?: string | null;
     practising_certificate_expires?: string | null;
+    practice_areas?: string[];
+    jurisdictions?: string[];
   } | null;
 }
 export interface MiniUser {
@@ -269,12 +272,14 @@ export interface Transaction {
 export interface LawyerProfileEdit {
   bar_number: string;
   practising_certificate_number: string;
+  practising_certificate_issued: string | null;
   practising_certificate_expires: string | null;
   practising_certificate_file_url: string | null;
   country: string;
   jurisdictions: string[];
   practice_areas: string[];
   languages: string[];
+  /** Auto-derived from practising_certificate_issued on save — read-only. */
   years_experience: number;
   /** Auto-derived from the LawyerRateTier table — read-only on the API. */
   hourly_rate: string | null;

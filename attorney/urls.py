@@ -3,7 +3,8 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.db import connection
 from django.http import JsonResponse
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.static import serve as media_serve
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -34,5 +35,14 @@ urlpatterns = [
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ]
 
+# Serve uploaded media (avatars, KYC certificates, proofs of payment). The
+# `static()` helper only wires this up under DEBUG; in production Django serves
+# nothing by default, so /media/ 404s and images render as a broken "?". Unless
+# a dedicated media server / CDN is put in front (set SERVE_MEDIA=false then),
+# fall back to letting Django serve /media/ directly.
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+elif getattr(settings, 'SERVE_MEDIA', True):
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', media_serve, {'document_root': settings.MEDIA_ROOT}),
+    ]

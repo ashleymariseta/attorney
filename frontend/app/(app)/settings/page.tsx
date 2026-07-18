@@ -53,6 +53,8 @@ import { useApp } from '@/components/AppShell';
 import { useToast } from '@/components/Toast';
 import { COUNTRY_OPTIONS, flagFor } from '@/lib/flag';
 import DateField from '@/components/DateField';
+import TagSelect from '@/components/TagSelect';
+import { PRACTICE_AREA_OPTIONS, JURISDICTION_OPTIONS } from '@/lib/lawyerOptions';
 
 const ACCOUNT_TYPES: Array<{ value: PaymentAccount['account_type']; label: string; icon: LucideIcon }> = [
   { value: 'ecocash', label: 'EcoCash', icon: Smartphone },
@@ -285,10 +287,10 @@ export default function SettingsPage() {
         practice_areas: form.practice_areas,
         jurisdictions: form.jurisdictions,
         languages: form.languages,
-        years_experience: form.years_experience,
         bio: form.bio,
         bar_number: form.bar_number,
         practising_certificate_number: form.practising_certificate_number,
+        practising_certificate_issued: form.practising_certificate_issued || null,
         practising_certificate_expires: form.practising_certificate_expires || null,
       });
       setForm(updated);
@@ -403,8 +405,13 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="label">Practice areas (comma separated)</label>
-            <input className="field" value={list(form.practice_areas)} onChange={(e) => set('practice_areas', parse(e.target.value))} />
+            <label className="label">Practice areas</label>
+            <TagSelect
+              value={form.practice_areas}
+              onChange={(v) => set('practice_areas', v)}
+              options={PRACTICE_AREA_OPTIONS}
+              placeholder="Search or add areas of law…"
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -429,16 +436,25 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="label">Jurisdictions (countries you practise in)</label>
-            <input className="field" value={list(form.jurisdictions)} onChange={(e) => set('jurisdictions', parse(e.target.value))} />
+            <TagSelect
+              value={form.jurisdictions}
+              onChange={(v) => set('jurisdictions', v)}
+              options={JURISDICTION_OPTIONS}
+              placeholder="Search or add jurisdictions…"
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Years experience</label>
-              <input className="field" type="number" min="0" value={form.years_experience}
-                onChange={(e) => set('years_experience', Number(e.target.value))} />
+              <div className="field flex items-center bg-canvas text-muted">
+                {form.years_experience} {form.years_experience === 1 ? 'year' : 'years'}
+              </div>
+              <p className="mt-1 text-[11px] text-muted">
+                Auto-calculated from your certificate issue date (in the KYC tab).
+              </p>
             </div>
             <div>
-              <label className="label">Bar number</label>
+              <label className="label">Bar number (optional)</label>
               <input className="field" value={form.bar_number} onChange={(e) => set('bar_number', e.target.value)} />
             </div>
           </div>
@@ -478,6 +494,16 @@ export default function SettingsPage() {
                 placeholder="e.g. PC-2026-0184"
               />
             </div>
+            <div>
+              <label className="label">Issued / admitted on</label>
+              <DateField
+                mode="date"
+                value={form.practising_certificate_issued ?? ''}
+                onChange={(v) => set('practising_certificate_issued', v || null)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Expires on</label>
               <DateField

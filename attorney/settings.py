@@ -126,6 +126,10 @@ STORAGES = {
 # v1 uses local storage; swap DEFAULT_FILE_STORAGE for an S3 backend in production.
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+# When DEBUG is off, Django won't serve /media/ unless we wire it up (see
+# attorney/urls.py). Keep it on for single-server deployments; set to false
+# once a dedicated media server / CDN fronts /media/.
+SERVE_MEDIA = env.bool('SERVE_MEDIA', default=True)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'core.User'

@@ -199,6 +199,9 @@ class LawyerProfile(models.Model):
     firm = models.ForeignKey(Firm, null=True, blank=True, on_delete=models.SET_NULL, related_name='lawyers')
     bar_number = models.CharField(max_length=64, blank=True)
     practising_certificate_number = models.CharField(max_length=64, blank=True)
+    # Date the practitioner was first admitted / issued their practising
+    # certificate. When set, ``years_experience`` is auto-derived from it.
+    practising_certificate_issued = models.DateField(null=True, blank=True)
     practising_certificate_expires = models.DateField(null=True, blank=True)
     practising_certificate_file = models.FileField(upload_to='certs/', null=True, blank=True, validators=[validate_doc])
     # ISO 3166-1 alpha-2 (e.g. "ZW", "ZA"). Used for the country flag badge.
@@ -218,6 +221,14 @@ class LawyerProfile(models.Model):
         return f'LawyerProfile({self.user.email})'
 
     def save(self, *args, **kwargs):
+        # Auto-derive years of experience from the practising-certificate issue
+        # date (whole years to today) whenever it's set — this feeds the rate
+        # tier below, so it must run first.
+        if self.practising_certificate_issued:
+            today = timezone.now().date()
+            d = self.practising_certificate_issued
+            years = today.year - d.year - ((today.month, today.day) < (d.month, d.day))
+            self.years_experience = max(0, years)
         # Pin the rate inside the bar-association bracket for the lawyer's
         # country + years of experience:
         #   - if no rate is set, default to the bracket midpoint;
