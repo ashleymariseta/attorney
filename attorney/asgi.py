@@ -57,6 +57,13 @@ class _AllowOriginInDebug:
     async def __call__(self, scope, receive, send):
         if getattr(dj_settings, 'DEBUG', False):
             return await self.inner(scope, receive, send)
+        # Origin validation is a browser cross-site protection. Native clients
+        # (the mobile app) don't send an Origin header, so treat "no Origin" as
+        # non-browser and let it through — it still authenticates via JWT. Only
+        # browser connections (which always send Origin) get validated.
+        has_origin = any(name == b'origin' for name, _ in scope.get('headers', []))
+        if not has_origin:
+            return await self.inner(scope, receive, send)
         return await self.validator(scope, receive, send)
 
 

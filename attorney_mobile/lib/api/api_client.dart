@@ -1,15 +1,21 @@
 import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Default API base. Android emulator can't reach the host's loopback —
-/// it has to use 10.0.2.2. Everything else (iOS sim, desktop, web) hits
-/// 127.0.0.1. Override at runtime with --dart-define=API_BASE=…
+/// Production API host. Release builds (Play Store / App Store) default to this
+/// so a shipped app always talks to the deployed backend.
+const String _prodApiBase = 'https://api.legalonline.co.zw';
+
+/// Default API base. Precedence:
+///   1. --dart-define=API_BASE=… (any build) — use for staging/overrides.
+///   2. Release builds → production (_prodApiBase).
+///   3. Debug: Android emulator needs 10.0.2.2; everything else 127.0.0.1.
 const String _envApiBase = String.fromEnvironment('API_BASE', defaultValue: '');
 String get kDefaultApiBase {
   if (_envApiBase.isNotEmpty) return _envApiBase;
+  if (kReleaseMode) return _prodApiBase;
   if (!kIsWeb && Platform.isAndroid) return 'http://10.0.2.2:8000';
   return 'http://127.0.0.1:8000';
 }
