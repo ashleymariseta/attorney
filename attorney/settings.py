@@ -215,6 +215,9 @@ else:
         'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
     }
 
+# Redis connection (used by the channel layer, Celery and the SSE feed).
+REDIS_URL = env('REDIS_URL')
+
 # Celery
 CELERY_BROKER_URL = env('REDIS_URL')
 CELERY_RESULT_BACKEND = env('REDIS_URL')

@@ -723,7 +723,18 @@ class MessageViewSet(viewsets.ModelViewSet):
 
 
 def _broadcast_channel(channel_id, payload):
-    """Fan out a chat event over the WebSocket group for this channel."""
+    """Fan out a chat event to this channel's realtime subscribers.
+
+    Publishes to the SSE feed (the primary transport) and to the WebSocket
+    group (kept as a fallback), so either client transport receives it."""
+    # SSE (primary) — plain HTTP, survives proxies/LBs that drop WebSockets.
+    try:
+        from .sse import publish_channel_event
+
+        publish_channel_event(channel_id, payload)
+    except Exception:
+        pass
+    # WebSocket group (fallback / legacy).
     try:
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync

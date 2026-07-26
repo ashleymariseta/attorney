@@ -57,8 +57,11 @@ router.register('reviews', ReviewViewSet, basename='review')
 router.register('time-entries', TimeEntryViewSet, basename='timeentry')
 router.register('trust-transactions', TrustTransactionViewSet, basename='trusttransaction')
 
+from .sse import channel_events  # noqa: E402
+
 urlpatterns = [
     path('', include(router.urls)),
+    path('channels/<int:channel_id>/events/', channel_events, name='channel-events'),
     path('me/lawyer-profile/', MyLawyerProfileView.as_view(), name='my-lawyer-profile'),
     path('me/client-profile/', MyClientProfileView.as_view(), name='my-client-profile'),
     path('me/firm/', JoinFirmView.as_view(), name='me-firm'),

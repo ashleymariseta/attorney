@@ -269,6 +269,28 @@ class WebSocketBroadcastTests(TransactionTestCase):
 
         asyncio.run(run())
 
+    def test_sse_endpoint_rejects_anon_and_non_members(self):
+        import asyncio
+        from django.test import AsyncClient
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        channel_id = self.channel.id
+        outsider = _make_client('sse-outsider@example.com')
+        outsider_token = str(RefreshToken.for_user(outsider).access_token)
+
+        async def run():
+            ac = AsyncClient()
+            # No token → 401 (returns before streaming, so no hang).
+            r = await ac.get(f'/api/v1/channels/{channel_id}/events/')
+            self.assertEqual(r.status_code, 401)
+            # Valid token but not a channel member → 403.
+            r = await ac.get(
+                f'/api/v1/channels/{channel_id}/events/?token={outsider_token}'
+            )
+            self.assertEqual(r.status_code, 403)
+
+        asyncio.run(run())
+
 
 class HealthzTests(TestCase):
     def test_healthz_ok(self):

@@ -54,7 +54,7 @@ import FileViewerModal from '@/components/FileViewerModal';
 import InvoiceViewerModal from '@/components/InvoiceViewerModal';
 import { LogTimeModal } from '@/components/TimeTracker';
 import { fireNotification, requestPermissionOnce } from '@/lib/browserNotify';
-import { useChannelSocket } from '@/lib/channelSocket';
+import { useChannelEvents as useChannelSocket } from '@/lib/channelEvents';
 import { Loader2, MessageCircle, Smile } from 'lucide-react';
 
 type DrawerTab = 'media' | 'links' | 'drafts' | 'payments' | 'time' | 'reviews';
