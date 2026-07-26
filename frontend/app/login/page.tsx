@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { CalendarCheck, Sparkles } from 'lucide-react';
 import { auth, ApiError } from '@/lib/api';
-import GoogleSignInButton, { googleEnabled } from '@/components/GoogleSignInButton';
 
 function safeNext(raw: string | null): string {
   // Only allow same-origin relative redirects.
@@ -67,18 +66,6 @@ function LoginInner() {
     }
   }
 
-  async function onGoogle(idToken: string) {
-    setError('');
-    setLoading(true);
-    try {
-      await auth.google(idToken);
-      router.push(next);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Google sign-in failed.');
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const registerHref = next !== '/dashboard' ? `/register?next=${encodeURIComponent(next)}` : '/register';
 
@@ -173,16 +160,6 @@ function LoginInner() {
 
           {!twoFa && (
             <>
-              {googleEnabled && (
-                <>
-                  <div className="my-5 flex items-center gap-3">
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="text-xs text-muted">or</span>
-                    <span className="h-px flex-1 bg-line" />
-                  </div>
-                  <GoogleSignInButton onCredential={onGoogle} onError={setError} text="continue_with" />
-                </>
-              )}
               <p className="mt-6 text-sm text-muted">
                 No account?{' '}
                 <Link href={registerHref} className="font-semibold text-brand underline underline-offset-2">Create one</Link>

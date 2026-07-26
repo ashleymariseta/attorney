@@ -9,7 +9,6 @@ import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/auth_scaffold.dart';
 import '../../widgets/common.dart';
-import '../../widgets/google_auth_button.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -141,8 +140,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           icon: const Icon(LucideIcons.userPlus, size: 16),
           label: Text(_busy ? 'Creating…' : 'Create account'),
         ),
-        const OrDivider(),
-        GoogleAuthButton(label: 'Sign up with Google', onError: (m) => setState(() => _error = m)),
       ],
     );
   }
