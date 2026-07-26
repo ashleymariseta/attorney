@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getAccess } from '@/lib/api';
+import { getAccess, refreshAccessToken } from '@/lib/api';
 
 export type ChannelStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -45,13 +45,23 @@ export function useChannelSocket(
     let socket: WebSocket | null = null;
     let attempt = 0;
     let closed = false;
+    // The access token (30-min lifetime) rides in the WS URL. If it expires,
+    // the server closes with 4401 — refresh it before the next reconnect so we
+    // don't loop forever showing "connecting".
+    let needsRefresh = false;
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    function connect() {
+    async function connect() {
       if (closed) return;
       setStatus('connecting');
-      const token = getAccess() ?? '';
+      let token = getAccess() ?? '';
+      if (needsRefresh) {
+        needsRefresh = false;
+        const fresh = await refreshAccessToken();
+        if (fresh) token = fresh;
+      }
+      if (closed) return;
       const url = `${wsBase()}/ws/channel/${channelId}/?token=${encodeURIComponent(token)}`;
       socket = new WebSocket(url);
 
@@ -72,10 +82,12 @@ export function useChannelSocket(
           onEventRef.current(payload as ChannelEvent);
         } catch {}
       };
-      socket.onclose = () => {
+      socket.onclose = (e) => {
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = null;
         if (closed) return;
+        // 4401 = unauthenticated (expired/invalid token) → refresh next time.
+        if (e.code === 4401) needsRefresh = true;
         setStatus('disconnected');
         attempt += 1;
         const delay = Math.min(30_000, 500 * Math.pow(2, attempt));

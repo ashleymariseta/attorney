@@ -55,7 +55,7 @@ import InvoiceViewerModal from '@/components/InvoiceViewerModal';
 import { LogTimeModal } from '@/components/TimeTracker';
 import { fireNotification, requestPermissionOnce } from '@/lib/browserNotify';
 import { useChannelSocket } from '@/lib/channelSocket';
-import { MessageCircle, Smile } from 'lucide-react';
+import { Loader2, MessageCircle, Smile } from 'lucide-react';
 
 type DrawerTab = 'media' | 'links' | 'drafts' | 'payments' | 'time' | 'reviews';
 
@@ -791,7 +791,9 @@ export default function MatterRoomPage() {
 
   const [milestoneOpen, setMilestoneOpen] = useState(false);
 
-  if (loading) {
+  // Only show the skeleton on the *initial* load. Re-loads must not unmount
+  // the chat (and its websocket) or the socket would tear down and reconnect.
+  if (loading && !matter) {
     return (
       <div className="flex h-full flex-col">
         <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-3">
@@ -1102,9 +1104,12 @@ function MessageThread({
         <ChatDoodles />
         {wsStatus !== 'connected' && (
           <div className="absolute inset-x-0 top-2 z-20 flex justify-center">
-            <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-900 shadow-sm">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-              {wsStatus === 'connecting' ? 'Connecting…' : 'Reconnecting — new messages may be delayed'}
+            <span
+              className="inline-flex items-center justify-center rounded-full bg-white/90 p-1.5 text-slate-400 shadow-sm ring-1 ring-line"
+              title="Connecting…"
+              aria-label="Connecting"
+            >
+              <Loader2 size={14} className="animate-spin" />
             </span>
           </div>
         )}

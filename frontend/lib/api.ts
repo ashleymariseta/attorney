@@ -55,7 +55,7 @@ function describe(body: unknown): string {
 // trigger ONE refresh roundtrip and then retry in parallel.
 let refreshInFlight: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+export async function refreshAccessToken(): Promise<string | null> {
   const refresh = getRefresh();
   if (!refresh) return null;
   try {

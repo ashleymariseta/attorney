@@ -617,8 +617,14 @@ class MatterViewSet(viewsets.ModelViewSet):
                 recipient=client,
                 kind=NotificationKind.GENERIC,
                 title=f'{lawyer_label} opened a new matter for you',
-                body=f'"{title}" is now open in your workspace.',
+                body=(
+                    f'{lawyer_label} has opened a new legal matter for you on Attorney. '
+                    f'You can message your lawyer, share documents and track everything in '
+                    f'the matter room.'
+                ),
                 link=f'/matters/{matter.id}',
+                button_label='Open the matter',
+                highlight=('Matter', title),
             )
 
         audit(
@@ -763,6 +769,27 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         consultation.confirmed_at = timezone.now()
         consultation.save(update_fields=['status', 'confirmed_at'])
         audit(actor=request.user, action='consultation.confirmed', obj=consultation, request=request)
+
+        # Let the client know their booking was accepted.
+        client = consultation.matter.client
+        lawyer_label = request.user.get_full_name() or request.user.email
+        when = consultation.scheduled_time
+        when_str = (
+            timezone.localtime(when).strftime('%A, %d %b %Y · %H:%M') if when else 'the agreed time'
+        )
+        if client and client.id != request.user.id:
+            notify(
+                recipient=client,
+                kind=NotificationKind.BOOKING,
+                title=f'{lawyer_label} confirmed your consultation',
+                body=(
+                    f'Good news — {lawyer_label} accepted your consultation for '
+                    f'"{consultation.matter.title}". It\'s locked in for the time below.'
+                ),
+                link=f'/matters/{consultation.matter_id}',
+                button_label='View booking',
+                highlight=('Consultation', when_str),
+            )
         return Response(self.get_serializer(consultation).data)
 
     @action(detail=True, methods=['post'])
@@ -825,6 +852,28 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             actor=request.user, action='consultation.rescheduled', obj=consultation,
             request=request, meta={'note': note} if note else None,
         )
+
+        # Notify the other party (lawyer or client) so they can re-confirm.
+        client = consultation.matter.client
+        recipient = client if request.user.id == consultation.lawyer_id else consultation.lawyer
+        actor_label = request.user.get_full_name() or request.user.email
+        new_str = timezone.localtime(parsed).strftime('%A, %d %b %Y · %H:%M')
+        if recipient and recipient.id != request.user.id:
+            body = (
+                f'{actor_label} proposed a new time for the consultation on '
+                f'"{consultation.matter.title}". Please review and re-confirm the new slot.'
+            )
+            if note:
+                body += f'\n\nNote: {note}'
+            notify(
+                recipient=recipient,
+                kind=NotificationKind.BOOKING,
+                title=f'{actor_label} rescheduled your consultation',
+                body=body,
+                link=f'/matters/{consultation.matter_id}',
+                button_label='Review new time',
+                highlight=('New time', new_str),
+            )
         return Response(self.get_serializer(consultation).data)
 
 

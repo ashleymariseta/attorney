@@ -263,6 +263,18 @@ INVITE_ACCEPT_URL = env.str('INVITE_ACCEPT_URL', 'http://localhost:3000/accept-i
 PASSWORD_RESET_URL = env.str('PASSWORD_RESET_URL', 'http://localhost:3000/reset-password')
 EMAIL_VERIFY_URL = env.str('EMAIL_VERIFY_URL', 'http://localhost:3000/verify-email')
 
+# Base URL of the frontend, used to turn in-app links (e.g. /matters/12) into
+# absolute URLs for email buttons. Defaults to the origin of INVITE_ACCEPT_URL
+# so prod that already sets that var needs nothing extra.
+from urllib.parse import urlsplit as _urlsplit  # noqa: E402
+
+_invite_origin = _urlsplit(INVITE_ACCEPT_URL)
+FRONTEND_URL = env.str(
+    'FRONTEND_URL',
+    f'{_invite_origin.scheme}://{_invite_origin.netloc}'
+    if _invite_origin.netloc else 'http://localhost:3000',
+)
+
 # Google Sign-In — the OAuth client IDs we accept as the audience of a Google
 # ID token (web, Android, iOS). Empty entries are filtered out.
 GOOGLE_OAUTH_CLIENT_IDS = [
@@ -273,7 +285,7 @@ GOOGLE_OAUTH_CLIENT_IDS = [
     ) if cid
 ]
 # Optional: restrict Google sign-in to a single Workspace domain (e.g.
-# "arttoney.com"). Blank allows any Google account.
+# "legalonline.co.zw"). Blank allows any Google account.
 GOOGLE_ALLOWED_EMAIL_DOMAIN = env.str('GOOGLE_ALLOWED_EMAIL_DOMAIN', '').strip().lower()
 
 # WhatsApp delivery for 2FA codes. When unset, codes are logged to the console

@@ -23,6 +23,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 
 # ASGI server (Channels/WebSockets + HTTP) via Gunicorn-managed Uvicorn workers.
+# A generous --timeout keeps long-lived WebSocket connections from being reaped
+# by the default 30s worker timeout.
 CMD ["gunicorn", "attorney.asgi:application", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "--workers", "3"]
+     "--bind", "0.0.0.0:8000", "--workers", "3", \
+     "--timeout", "120", "--graceful-timeout", "30"]
