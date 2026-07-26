@@ -18,8 +18,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.attorney.attorney_mobile"
+        // Store-facing application ID (Play Store). The internal `namespace`
+        // above stays on the original package — only the app ID needs to match
+        // the brand/domain.
+        applicationId = "com.dataimprint.legalonline"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

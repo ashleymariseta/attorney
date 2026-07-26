@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:dio/dio.dart';
 
 import '../../api/endpoints.dart';
 import '../../api/models.dart';
@@ -52,9 +52,12 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
   bool _sending = false;
 
   // WS state
-  WebSocketChannel? _ws;
-  StreamSubscription? _wsSub;
-  Timer? _pingTimer;
+  // Realtime feed over Server-Sent Events (plain HTTP; survives proxies/LBs
+  // that drop WebSockets).
+  StreamSubscription<List<int>>? _sseSub;
+  CancelToken? _sseCancel;
+  String _sseBuffer = '';
+  bool _sseNeedsRefresh = false;
   Timer? _reconnectTimer;
   int _wsAttempt = 0;
   bool _wsClosed = false;
@@ -69,10 +72,9 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
   @override
   void dispose() {
     _wsClosed = true;
-    _pingTimer?.cancel();
     _reconnectTimer?.cancel();
-    _wsSub?.cancel();
-    _ws?.sink.close();
+    _sseSub?.cancel();
+    _sseCancel?.cancel();
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -93,7 +95,7 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
       ]);
       if (!mounted) return;
       setState(() => _loading = false);
-      if (m.channelId != null) _connectWs(m.channelId!);
+      if (m.channelId != null) _connectEvents(m.channelId!);
       // Jump to bottom once first frame is laid out.
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     } catch (e) {
@@ -162,41 +164,52 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
     if (mounted) setState(() => _consults = all.where((c) => c.matter == widget.matterId).toList());
   }
 
-  // ---- WebSocket ----
+  // ---- Realtime (Server-Sent Events) ----
 
-  Future<void> _connectWs(int channelId) async {
-    if (_wsClosed) return;
-    if (!mounted) return;
+  Future<void> _connectEvents(int channelId) async {
+    if (_wsClosed || !mounted) return;
     setState(() => _wsStatus = 'connecting');
     try {
       final api = ref.read(apiClientProvider);
+      // The token rides in the URL (EventSource-style). Refresh it first if the
+      // last attempt failed auth, so we don't loop on an expired token.
+      if (_sseNeedsRefresh) {
+        _sseNeedsRefresh = false;
+        await api.refreshAccess();
+      }
       final token = await api.getAccess() ?? '';
-      final base = api.dio.options.baseUrl.replaceFirst(RegExp(r'^http'), 'ws');
-      final url = Uri.parse('$base/ws/channel/$channelId/?token=${Uri.encodeComponent(token)}');
-      _ws = WebSocketChannel.connect(url);
-      _wsSub = _ws!.stream.listen(
-        _onWsMessage,
-        onError: (_) => _onWsClosed(),
-        onDone: _onWsClosed,
+      _sseCancel?.cancel();
+      _sseCancel = CancelToken();
+      _sseBuffer = '';
+      final resp = await api.dio.get<ResponseBody>(
+        '/api/v1/channels/$channelId/events/?token=${Uri.encodeComponent(token)}',
+        options: Options(
+          responseType: ResponseType.stream,
+          receiveTimeout: Duration.zero, // long-lived stream, no idle timeout
+          headers: {'Accept': 'text/event-stream'},
+        ),
+        cancelToken: _sseCancel,
       );
       if (!mounted) return;
       setState(() {
         _wsStatus = 'connected';
         _wsAttempt = 0;
       });
-      _pingTimer?.cancel();
-      _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-        try {
-          _ws?.sink.add(jsonEncode({'type': 'ping'}));
-        } catch (_) {}
-      });
+      _sseSub = resp.data!.stream.listen(
+        _onSseChunk,
+        onError: (_) => _onSseClosed(),
+        onDone: _onSseClosed,
+        cancelOnError: true,
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) _sseNeedsRefresh = true;
+      _onSseClosed();
     } catch (_) {
-      _onWsClosed();
+      _onSseClosed();
     }
   }
 
-  void _onWsClosed() {
-    _pingTimer?.cancel();
+  void _onSseClosed() {
     if (_wsClosed) return;
     if (mounted) setState(() => _wsStatus = 'disconnected');
     _wsAttempt += 1;
@@ -206,14 +219,32 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
       final cid = _matter?.channelId;
-      if (cid != null) _connectWs(cid);
+      if (cid != null) _connectEvents(cid);
     });
   }
 
-  void _onWsMessage(dynamic raw) {
+  /// Parse the SSE byte stream: frames are separated by a blank line; `data:`
+  /// lines carry JSON, `:` comment lines (heartbeats) are ignored.
+  void _onSseChunk(List<int> bytes) {
+    _sseBuffer += utf8.decode(bytes, allowMalformed: true);
+    int idx;
+    while ((idx = _sseBuffer.indexOf('\n\n')) != -1) {
+      final frame = _sseBuffer.substring(0, idx);
+      _sseBuffer = _sseBuffer.substring(idx + 2);
+      for (final rawLine in frame.split('\n')) {
+        final line = rawLine.replaceAll('\r', '');
+        if (!line.startsWith('data:')) continue;
+        final data = line.substring(5).trim();
+        if (data.isEmpty) continue;
+        try {
+          _dispatchEvent(jsonDecode(data) as Map<String, dynamic>);
+        } catch (_) {}
+      }
+    }
+  }
+
+  void _dispatchEvent(Map<String, dynamic> payload) {
     try {
-      final payload = jsonDecode(raw as String) as Map<String, dynamic>;
-      if (payload['type'] == 'pong') return;
       final kind = payload['kind'] as String?;
       if (kind == null) return;
       if (kind == 'message.created' || kind == 'message.reaction') {

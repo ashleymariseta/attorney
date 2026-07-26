@@ -60,6 +60,15 @@ class ApiClient {
   /// ONE refresh round-trip.
   Future<String?>? _inflightRefresh;
 
+  /// Public, coalesced token refresh. Used by the SSE stream, whose token
+  /// rides in the URL and so isn't covered by the 401 header-retry interceptor.
+  Future<String?> refreshAccess() async {
+    _inflightRefresh ??= _refresh();
+    final fresh = await _inflightRefresh;
+    _inflightRefresh = null;
+    return fresh;
+  }
+
   Future<String?> _refresh() async {
     final refresh = await getRefresh();
     if (refresh == null) return null;
