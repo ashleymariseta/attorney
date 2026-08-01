@@ -14,6 +14,7 @@ class User {
     this.emailVerified,
     this.twoFactorMethod,
     this.avatarUrl,
+    this.lawyerCredentialsSubmitted,
   });
 
   final int id;
@@ -27,6 +28,9 @@ class User {
   final bool? emailVerified;
   final String? twoFactorMethod;
   final String? avatarUrl;
+  /// From lawyer_profile.credentials_submitted — false until the lawyer has
+  /// submitted a practising certificate. Null for non-lawyers.
+  final bool? lawyerCredentialsSubmitted;
 
   String get fullName {
     final n = '$firstName $lastName'.trim();
@@ -36,19 +40,28 @@ class User {
   bool get isLawyer => role == 'lawyer';
   bool get isClient => role.startsWith('client');
 
-  factory User.fromJson(Map<String, dynamic> j) => User(
-        id: j['id'] as int,
-        email: j['email'] as String? ?? '',
-        firstName: j['first_name'] as String? ?? '',
-        lastName: j['last_name'] as String? ?? '',
-        role: j['role'] as String? ?? '',
-        phoneNumber: j['phone_number'] as String?,
-        whatsappNumber: j['whatsapp_number'] as String?,
-        isVerified: j['is_verified'] as bool? ?? false,
-        emailVerified: j['email_verified'] as bool?,
-        twoFactorMethod: j['two_factor_method'] as String?,
-        avatarUrl: j['avatar_url'] as String?,
-      );
+  /// A lawyer who hasn't yet cleared the credential-verification gate.
+  bool get lawyerNeedsVerification =>
+      isLawyer && lawyerCredentialsSubmitted == false;
+
+  factory User.fromJson(Map<String, dynamic> j) {
+    final lp = j['lawyer_profile'];
+    return User(
+      id: j['id'] as int,
+      email: j['email'] as String? ?? '',
+      firstName: j['first_name'] as String? ?? '',
+      lastName: j['last_name'] as String? ?? '',
+      role: j['role'] as String? ?? '',
+      phoneNumber: j['phone_number'] as String?,
+      whatsappNumber: j['whatsapp_number'] as String?,
+      isVerified: j['is_verified'] as bool? ?? false,
+      emailVerified: j['email_verified'] as bool?,
+      twoFactorMethod: j['two_factor_method'] as String?,
+      avatarUrl: j['avatar_url'] as String?,
+      lawyerCredentialsSubmitted:
+          lp is Map ? lp['credentials_submitted'] as bool? : null,
+    );
+  }
 }
 
 class MiniUser {

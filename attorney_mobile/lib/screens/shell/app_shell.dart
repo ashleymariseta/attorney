@@ -7,6 +7,7 @@ import '../../api/models.dart';
 import '../../router.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
+import '../auth/lawyer_verification_screen.dart';
 
 /// Mobile-first chrome that wraps every auth-gated route. Provides:
 ///  * an AppBar with the matter title fallback + notification bell action
@@ -23,6 +24,9 @@ class AppShell extends ConsumerWidget {
     // Anon visitors browsing public routes (e.g. /lawyers from the landing
     // page) get no shell chrome — the screen handles its own AppBar.
     if (me == null) return child;
+    // Lawyers must submit their practising credentials before using the app —
+    // a blocking gate, same as the web VerificationGateModal.
+    if (me.lawyerNeedsVerification) return const LawyerVerificationScreen();
     final isLawyer = me.isLawyer;
     final isClient = me.isClient;
 

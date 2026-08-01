@@ -452,6 +452,7 @@ class _LawyerKycTab extends ConsumerStatefulWidget {
 
 class _LawyerKycTabState extends ConsumerState<_LawyerKycTab> {
   late TextEditingController _certNumber;
+  DateTime? _issued;
   DateTime? _expires;
   bool _busy = false;
   String? _error;
@@ -462,6 +463,10 @@ class _LawyerKycTabState extends ConsumerState<_LawyerKycTab> {
     _certNumber = TextEditingController(
       text: widget.form['practising_certificate_number'] as String? ?? '',
     );
+    final issuedRaw = widget.form['practising_certificate_issued'] as String?;
+    if (issuedRaw != null && issuedRaw.isNotEmpty) {
+      _issued = DateTime.tryParse(issuedRaw);
+    }
     final raw = widget.form['practising_certificate_expires'] as String?;
     if (raw != null && raw.isNotEmpty) {
       _expires = DateTime.tryParse(raw);
@@ -472,6 +477,16 @@ class _LawyerKycTabState extends ConsumerState<_LawyerKycTab> {
   void dispose() {
     _certNumber.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickIssued() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _issued ?? DateTime.now(),
+      firstDate: DateTime(1970),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) setState(() => _issued = picked);
   }
 
   Future<void> _pickExpires() async {
@@ -523,6 +538,8 @@ class _LawyerKycTabState extends ConsumerState<_LawyerKycTab> {
     try {
       final payload = <String, dynamic>{
         'practising_certificate_number': _certNumber.text.trim(),
+        'practising_certificate_issued':
+            _issued == null ? null : DateFormat('yyyy-MM-dd').format(_issued!),
         'practising_certificate_expires':
             _expires == null ? null : DateFormat('yyyy-MM-dd').format(_expires!),
       };
@@ -597,6 +614,23 @@ class _LawyerKycTabState extends ConsumerState<_LawyerKycTab> {
             child: TextField(
               controller: _certNumber,
               decoration: const InputDecoration(hintText: 'e.g. PC-2026-0184'),
+            ),
+          ),
+          _Field(
+            label: 'Issued / admitted on',
+            child: InkWell(
+              onTap: _pickIssued,
+              child: InputDecorator(
+                decoration: const InputDecoration(),
+                child: Text(
+                  _issued == null
+                      ? 'Select a date'
+                      : DateFormat('d MMM yyyy').format(_issued!),
+                  style: TextStyle(
+                    color: _issued == null ? AppColors.muted : AppColors.ink,
+                  ),
+                ),
+              ),
             ),
           ),
           _Field(
