@@ -157,16 +157,25 @@ class LawyerCardSerializer(serializers.ModelSerializer):
     country = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name', 'is_verified',
             'profile', 'on_retainer', 'hourly_rate', 'country', 'avg_rating', 'review_count',
+            'avatar_url',
         ]
 
     def get_full_name(self, obj):
         return f'{obj.first_name} {obj.last_name}'.strip() or obj.email
+
+    def get_avatar_url(self, obj):
+        request = self.context.get('request')
+        if not obj.avatar:
+            return None
+        url = obj.avatar.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_on_retainer(self, obj):
         retained = self.context.get('retained_lawyer_ids') or set()

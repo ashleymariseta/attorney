@@ -492,7 +492,7 @@ export default function PublicLawyersPage() {
                 <Link href={`/lawyers/${l.id}`} className="relative z-10 flex items-start gap-3 pr-24 outline-none">
                   <div className="relative shrink-0">
                     <Image
-                      src={photo(l.id)}
+                      src={l.avatar_url || photo(l.id)}
                       alt={`Headshot of ${l.full_name}`}
                       width={56}
                       height={56}

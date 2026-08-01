@@ -201,6 +201,7 @@ export interface Lawyer {
   country: string;
   avg_rating: number | null;
   review_count: number;
+  avatar_url?: string | null;
 }
 export interface Consultation {
   id: number;

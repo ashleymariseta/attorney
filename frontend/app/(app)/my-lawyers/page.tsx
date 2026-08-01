@@ -42,7 +42,7 @@ export default function MyLawyersPage() {
             <div key={r.id} className="card relative overflow-hidden">
               <DecoIcon icon={GraduationCap} />
               <div className="relative z-10 flex items-center gap-3">
-                <Image src={photo(r.lawyer_detail.id)} alt={r.lawyer_detail.full_name}
+                <Image src={r.lawyer_detail.avatar_url || photo(r.lawyer_detail.id)} alt={r.lawyer_detail.full_name}
                   width={52} height={52} className="h-13 w-13 rounded-full object-cover" />
                 <div>
                   <h3 className="font-semibold">{r.lawyer_detail.full_name}</h3>

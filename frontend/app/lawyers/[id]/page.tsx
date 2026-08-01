@@ -188,7 +188,7 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
           )}
           <div className="grid gap-6 p-6 sm:grid-cols-[auto_1fr_auto] sm:items-center sm:gap-8 sm:p-8">
             <Image
-              src={photo(lawyer.id)}
+              src={lawyer.avatar_url || photo(lawyer.id)}
               alt={`Headshot of ${lawyer.full_name}`}
               width={120}
               height={120}
