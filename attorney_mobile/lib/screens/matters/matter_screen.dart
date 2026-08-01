@@ -655,14 +655,17 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
       body: Column(
         children: [
           if (_wsStatus != 'connected')
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              color: const Color(0xFFFEF3C7),
-              child: Text(
-                _wsStatus == 'connecting' ? 'Connecting…' : 'Reconnecting — new messages may be delayed',
-                style: const TextStyle(fontSize: 11, color: Color(0xFF92400E), fontWeight: FontWeight.w600),
-                textAlign: TextAlign.center,
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF94A3B8)),
+                  ),
+                ),
               ),
             ),
           Expanded(

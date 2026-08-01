@@ -143,6 +143,7 @@ class Lawyer {
     this.profile,
     this.hourlyRate,
     this.avgRating,
+    this.avatarUrl,
   });
   final int id;
   final String? email;
@@ -156,6 +157,7 @@ class Lawyer {
   final String country;
   final double? avgRating;
   final int reviewCount;
+  final String? avatarUrl;
 
   factory Lawyer.fromJson(Map<String, dynamic> j) => Lawyer(
         id: j['id'] as int,
@@ -169,6 +171,7 @@ class Lawyer {
         hourlyRate: j['hourly_rate'] as String?,
         avgRating: (j['avg_rating'] as num?)?.toDouble(),
         reviewCount: (j['review_count'] as num?)?.toInt() ?? 0,
+        avatarUrl: j['avatar_url'] as String?,
         profile: j['profile'] != null
             ? LawyerProfile.fromJson(j['profile'] as Map<String, dynamic>)
             : null,

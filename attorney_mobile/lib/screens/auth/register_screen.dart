@@ -116,19 +116,35 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             prefixIcon: Icon(LucideIcons.lock, size: 18, color: AppColors.muted),
           ),
         ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: _role,
-          decoration: const InputDecoration(
-            labelText: 'I am a',
-            prefixIcon: Icon(LucideIcons.briefcase, size: 18, color: AppColors.muted),
-          ),
-          items: const [
-            DropdownMenuItem(value: 'client_individual', child: Text('Client — Individual')),
-            DropdownMenuItem(value: 'client_business', child: Text('Client — Business')),
-            DropdownMenuItem(value: 'lawyer', child: Text('Lawyer')),
-          ],
-          onChanged: (v) => setState(() => _role = v ?? 'client_individual'),
+        const SizedBox(height: 16),
+        const Text('I want to…',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.muted)),
+        const SizedBox(height: 8),
+        _IntentButton(
+          icon: LucideIcons.search,
+          title: 'Find a lawyer',
+          subtitle: 'Book consultations and manage matters',
+          selected: _role == 'client_individual',
+          onTap: () => setState(() => _role = 'client_individual'),
+        ),
+        const SizedBox(height: 8),
+        _IntentButton(
+          icon: LucideIcons.building2,
+          title: 'Find a lawyer for my business',
+          subtitle: 'Represent a company or organisation',
+          selected: _role == 'client_business',
+          onTap: () => setState(() => _role = 'client_business'),
+        ),
+        const SizedBox(height: 8),
+        _IntentButton(
+          icon: LucideIcons.scale,
+          title: 'Practise as a lawyer',
+          subtitle: 'Offer legal services on Legal Online',
+          selected: _role == 'lawyer',
+          onTap: () => setState(() => _role = 'lawyer'),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
@@ -141,6 +157,76 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           label: Text(_busy ? 'Creating…' : 'Create account'),
         ),
       ],
+    );
+  }
+}
+
+/// Selectable "intent" tile used on the register screen in place of the role
+/// dropdown — clearer, tap-friendly role selection.
+class _IntentButton extends StatelessWidget {
+  const _IntentButton({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.cardTint : AppColors.surface,
+          border: Border.all(
+            color: selected ? AppColors.brand : AppColors.line,
+            width: selected ? 1.5 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: selected ? AppColors.brand : AppColors.brandLight,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(icon,
+                  size: 18,
+                  color: selected ? Colors.white : AppColors.brandDark),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.ink)),
+                  Text(subtitle,
+                      style:
+                          const TextStyle(fontSize: 11, color: AppColors.muted)),
+                ],
+              ),
+            ),
+            if (selected)
+              const Icon(LucideIcons.checkCircle2,
+                  size: 18, color: AppColors.brand),
+          ],
+        ),
+      ),
     );
   }
 }

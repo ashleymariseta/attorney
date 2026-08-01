@@ -61,10 +61,55 @@ class _LawyersScreenState extends ConsumerState<LawyersScreen> {
       ep.listLawyers(),
       ep.listFirms(),
     ]);
+    // Existing bookings drive the "Reschedule" affordance. Best-effort — anon
+    // users (and any error) just get an empty list and the normal "Book" flow.
+    List<Consultation> consults = const [];
+    try {
+      consults = await ep.listConsultations();
+    } catch (_) {}
     return _DirectoryData(
       lawyers: results[0] as List<Lawyer>,
       firms: results[1] as List<Map<String, dynamic>>,
+      consultations: consults,
     );
+  }
+
+  static const _deadStatuses = {'cancelled', 'completed', 'declined', 'expired'};
+
+  Consultation? _activeBookingWith(int lawyerId, List<Consultation> all) {
+    final matches = all
+        .where((c) => c.lawyer?.id == lawyerId && !_deadStatuses.contains(c.status))
+        .toList()
+      ..sort((a, b) => b.scheduledTime.compareTo(a.scheduledTime));
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  Future<void> _reschedule(Consultation c) async {
+    final current = DateTime.tryParse(c.scheduledTime) ?? DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(current),
+    );
+    if (time == null || !mounted) return;
+    final when = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    try {
+      await ref.read(endpointsProvider).rescheduleConsultation(c.id, when.toIso8601String());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Consultation rescheduled — your lawyer will re-confirm.')),
+      );
+      await _refresh();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   Future<void> _refresh() async {
@@ -249,6 +294,8 @@ class _LawyersScreenState extends ConsumerState<LawyersScreen> {
                         isClient: isClient,
                         adding: _adding == l.id,
                         onAdd: () => _addToTeam(l),
+                        existingBooking: _activeBookingWith(l.id, data.consultations),
+                        onReschedule: (c) => _reschedule(c),
                         onBook: () {
                           if (isAuthed) {
                             context.go(Routes.book(l.id));
@@ -582,9 +629,10 @@ class _LawyersScreenState extends ConsumerState<LawyersScreen> {
 }
 
 class _DirectoryData {
-  _DirectoryData({required this.lawyers, required this.firms});
+  _DirectoryData({required this.lawyers, required this.firms, required this.consultations});
   final List<Lawyer> lawyers;
   final List<Map<String, dynamic>> firms;
+  final List<Consultation> consultations;
 }
 
 class _LawyerCard extends StatelessWidget {
@@ -594,12 +642,16 @@ class _LawyerCard extends StatelessWidget {
     required this.adding,
     required this.onAdd,
     required this.onBook,
+    this.existingBooking,
+    this.onReschedule,
   });
   final Lawyer lawyer;
   final bool isClient;
   final bool adding;
   final VoidCallback onAdd;
   final VoidCallback onBook;
+  final Consultation? existingBooking;
+  final void Function(Consultation)? onReschedule;
 
   @override
   Widget build(BuildContext context) {
@@ -634,6 +686,8 @@ class _LawyerCard extends StatelessWidget {
               adding: adding,
               onAdd: onAdd,
               onBook: onBook,
+              existingBooking: existingBooking,
+              onReschedule: onReschedule,
             ),
           ),
         ],
@@ -652,6 +706,8 @@ class _LawyerCardBody extends StatelessWidget {
     required this.adding,
     required this.onAdd,
     required this.onBook,
+    this.existingBooking,
+    this.onReschedule,
   });
   final Lawyer lawyer;
   final String juris;
@@ -661,6 +717,8 @@ class _LawyerCardBody extends StatelessWidget {
   final bool adding;
   final VoidCallback onAdd;
   final VoidCallback onBook;
+  final Consultation? existingBooking;
+  final void Function(Consultation)? onReschedule;
 
   @override
   Widget build(BuildContext context) {
@@ -676,6 +734,10 @@ class _LawyerCardBody extends StatelessWidget {
                   CircleAvatar(
                     radius: 26,
                     backgroundColor: AppColors.brandLight,
+                    foregroundImage: (lawyer.avatarUrl != null &&
+                            lawyer.avatarUrl!.isNotEmpty)
+                        ? NetworkImage(lawyer.avatarUrl!)
+                        : null,
                     child: Text(
                       initials.toUpperCase(),
                       style: const TextStyle(
@@ -776,11 +838,17 @@ class _LawyerCardBody extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: FilledButton.icon(
-                  onPressed: onBook,
-                  icon: const Icon(LucideIcons.calendar, size: 14),
-                  label: const Text('Book'),
-                ),
+                child: (existingBooking != null && onReschedule != null)
+                    ? FilledButton.icon(
+                        onPressed: () => onReschedule!(existingBooking!),
+                        icon: const Icon(LucideIcons.calendarClock, size: 14),
+                        label: const Text('Reschedule'),
+                      )
+                    : FilledButton.icon(
+                        onPressed: onBook,
+                        icon: const Icon(LucideIcons.calendar, size: 14),
+                        label: const Text('Book'),
+                      ),
               ),
               if (isClient) ...[
                 const SizedBox(width: 8),
