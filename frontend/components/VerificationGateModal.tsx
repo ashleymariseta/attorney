@@ -42,8 +42,11 @@ export default function VerificationGateModal({
   const [busy, setBusy] = useState(false);
 
   const isLawyer = me?.role === 'lawyer';
-  // Only gate lawyer accounts that haven't submitted credentials yet.
-  if (!me || !isLawyer || !me.lawyer_profile || me.lawyer_profile.credentials_submitted) return null;
+  // Only gate lawyer accounts that haven't submitted credentials yet. A missing
+  // lawyer_profile counts as "not submitted", NOT as "nothing to do" — accounts
+  // converted to lawyer after signup have no profile row until they touch the
+  // profile endpoint, and skipping them let them straight past the gate.
+  if (!me || !isLawyer || me.lawyer_profile?.credentials_submitted) return null;
 
   async function onAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
