@@ -47,6 +47,20 @@ export default function BookingsPage() {
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const today = new Date();
 
+  // The grid only renders the seven days on screen, so a booking further out is
+  // invisible until you page forward — and a client booking a slot next week is
+  // exactly the case people miss. Surface the next few above the calendar.
+  const upcomingBeyond = useMemo(() => {
+    const weekEnd = addDays(weekStart, 7); // exclusive — first day past the grid
+    return consultations
+      .filter((c) => {
+        const dt = new Date(c.scheduled_time);
+        return dt >= weekEnd && !['cancelled', 'completed'].includes(c.status);
+      })
+      .sort((a, b) => +new Date(a.scheduled_time) - +new Date(b.scheduled_time))
+      .slice(0, 5);
+  }, [consultations, weekStart]);
+
   const weekLabel = `${weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' })} – ${addDays(
     weekStart,
     6
@@ -72,6 +86,45 @@ export default function BookingsPage() {
           <button className="btn-outline px-3 py-1" onClick={() => setWeekStart(addDays(weekStart, 7))}>›</button>
         </div>
       </div>
+
+      {upcomingBeyond.length > 0 && (
+        <div className="border-b border-line bg-canvas/60 px-5 py-2.5">
+          <div className="flex items-center gap-2">
+            <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Coming up later
+            </p>
+            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+              {upcomingBeyond.map((c) => {
+                const dt = new Date(c.scheduled_time);
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelected(c)}
+                    title={`${c.matter_title} — ${dt.toLocaleString()}`}
+                    className={`shrink-0 rounded-md border px-2 py-1 text-left text-[11px] shadow-sm transition hover:brightness-95 ${
+                      STATUS_STYLE[c.status] ?? 'bg-surface border-line'
+                    }`}
+                  >
+                    <span className="block font-semibold leading-tight">
+                      {dt.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </span>
+                    <span className="block max-w-[160px] truncate opacity-80">
+                      {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })} ·{' '}
+                      {c.matter_title}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setWeekStart(startOfWeek(new Date(upcomingBeyond[0].scheduled_time)))}
+              className="shrink-0 text-[11px] font-semibold text-brand hover:underline"
+            >
+              Jump to next
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="min-w-[760px]">

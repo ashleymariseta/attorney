@@ -17,6 +17,10 @@ from django.contrib.auth import get_user_model
 from django.http import HttpResponse, HttpResponseNotAllowed, StreamingHttpResponse
 
 _SSE_PREFIX = 'sse:channel:'
+# Per-user feed, for events that aren't scoped to one matter room — a new
+# booking, a new notification. The matter channel can't carry these: it is
+# created *by* the booking, and the recipient isn't subscribed to it.
+_USER_PREFIX = 'sse:user:'
 # Seconds between heartbeat comments — keeps proxies from idling the stream out.
 HEARTBEAT_SECONDS = 20
 
@@ -25,15 +29,15 @@ def _redis_url() -> str:
     return getattr(settings, 'REDIS_URL', None) or 'redis://127.0.0.1:6379/0'
 
 
-def publish_channel_event(channel_id, payload) -> None:
-    """Publish a chat event to a channel's SSE feed. Sync, safe to call from a
-    request handler, and never raises (realtime must not break the request)."""
+def _publish(topic, payload) -> None:
+    """Publish to a Redis topic. Sync, safe to call from a request handler, and
+    never raises (realtime must not break the request)."""
     try:
         import redis
 
         client = redis.from_url(_redis_url())
         try:
-            client.publish(f'{_SSE_PREFIX}{channel_id}', json.dumps(payload))
+            client.publish(topic, json.dumps(payload))
         finally:
             try:
                 client.close()
@@ -41,6 +45,16 @@ def publish_channel_event(channel_id, payload) -> None:
                 pass
     except Exception:  # noqa: BLE001
         pass
+
+
+def publish_channel_event(channel_id, payload) -> None:
+    """Publish a chat event to a channel's SSE feed."""
+    _publish(f'{_SSE_PREFIX}{channel_id}', payload)
+
+
+def publish_user_event(user_id, payload) -> None:
+    """Publish an account-level event to one user's SSE feed."""
+    _publish(f'{_USER_PREFIX}{user_id}', payload)
 
 
 @sync_to_async
@@ -71,13 +85,13 @@ def _is_member(channel_id, user_id) -> bool:
     return Channel.objects.filter(id=channel_id, members__id=user_id).exists()
 
 
-async def _event_stream(channel_id):
-    """Async generator yielding SSE frames from the channel's Redis feed."""
+async def _event_stream(topic):
+    """Async generator yielding SSE frames from a Redis pub/sub topic."""
     import redis.asyncio as aioredis
 
     client = aioredis.from_url(_redis_url())
     pubsub = client.pubsub()
-    await pubsub.subscribe(f'{_SSE_PREFIX}{channel_id}')
+    await pubsub.subscribe(topic)
     # Open the stream immediately so the client flips to "connected".
     yield b': connected\n\n'
     try:
@@ -100,11 +114,19 @@ async def _event_stream(channel_id):
             yield f'data: {data}\n\n'.encode('utf-8')
     finally:
         try:
-            await pubsub.unsubscribe(f'{_SSE_PREFIX}{channel_id}')
+            await pubsub.unsubscribe(topic)
             await pubsub.aclose()
             await client.aclose()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _stream_response(topic):
+    response = StreamingHttpResponse(_event_stream(topic), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'  # tell nginx not to buffer the stream
+    response['Connection'] = 'keep-alive'
+    return response
 
 
 async def channel_events(request, channel_id):
@@ -122,10 +144,21 @@ async def channel_events(request, channel_id):
     if not await _is_member(channel_id, user.id):
         return HttpResponse('Forbidden', status=403)
 
-    response = StreamingHttpResponse(
-        _event_stream(channel_id), content_type='text/event-stream'
-    )
-    response['Cache-Control'] = 'no-cache'
-    response['X-Accel-Buffering'] = 'no'  # tell nginx not to buffer the stream
-    response['Connection'] = 'keep-alive'
-    return response
+    return _stream_response(f'{_SSE_PREFIX}{channel_id}')
+
+
+async def user_events(request):
+    """SSE endpoint: ``GET /api/v1/me/events/?token=<access>``.
+
+    The signed-in account's own feed — new bookings and notifications, which
+    belong to no matter room. Authenticating the token *is* the authorisation:
+    a user only ever gets their own topic.
+    """
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+
+    user = await _authenticate(request.GET.get('token', ''))
+    if user is None:
+        return HttpResponse('Unauthorized', status=401)
+
+    return _stream_response(f'{_USER_PREFIX}{user.id}')

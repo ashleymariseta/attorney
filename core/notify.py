@@ -35,6 +35,14 @@ def notify(
         link=link,
         sent_email=False,
     )
+    # Push it to the recipient's own SSE feed so the bell updates without a
+    # reload. Never raises — realtime must not break the notification.
+    from .sse import publish_user_event
+
+    publish_user_event(
+        recipient.id,
+        {'type': 'notification', 'kind': str(kind), 'id': notif.id, 'title': title},
+    )
     if send_email and recipient.email and '@invite.attorney.local' not in recipient.email:
         paras = paragraphs_from_body(body)
         if link:

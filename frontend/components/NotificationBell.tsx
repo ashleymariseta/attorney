@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { notifications as notifApi, type Notif } from '@/lib/api';
 
-export default function NotificationBell() {
+export default function NotificationBell({ refreshTick = 0 }: { refreshTick?: number }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(false);
@@ -38,11 +38,17 @@ export default function NotificationBell() {
     } catch {}
   }
 
+  // The 60s poll is the safety net; refreshTick makes a realtime notification
+  // land immediately.
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 60_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (refreshTick > 0) refresh();
+  }, [refreshTick]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {

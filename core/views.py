@@ -500,6 +500,41 @@ class MatterViewSet(viewsets.ModelViewSet):
                     status=PaymentStatus.PENDING_REVIEW,
                 )
 
+        # Tell the lawyer a booking landed — in-app + email, and on their live
+        # SSE feed so an open Bookings/calendar tab picks it up without a reload.
+        if consultation is not None and lawyer.id != request.user.id:
+            client_label = request.user.get_full_name() or request.user.email
+            when_str = timezone.localtime(consultation.scheduled_time).strftime(
+                '%A, %d %b %Y · %H:%M'
+            )
+            awaiting_payment = consultation.status == ConsultationStatus.AWAITING_PAYMENT
+            notify(
+                recipient=lawyer,
+                kind=NotificationKind.BOOKING,
+                title=f'{client_label} booked a consultation',
+                body=(
+                    f'{client_label} requested a consultation on "{matter.title}". '
+                    + (
+                        'It will need your confirmation once their proof of payment clears.'
+                        if awaiting_payment
+                        else 'Review the time and confirm the booking.'
+                    )
+                ),
+                link='/bookings',
+                button_label='View booking',
+                highlight=('Consultation', when_str),
+            )
+            from .sse import publish_user_event
+
+            publish_user_event(
+                lawyer.id,
+                {
+                    'type': 'consultation.created',
+                    'consultation_id': consultation.id,
+                    'matter_id': matter.id,
+                },
+            )
+
         body = MatterSerializer(matter, context=self.get_serializer_context()).data
         body['on_retainer'] = on_retainer
         body['consultation_id'] = consultation.id if consultation else None

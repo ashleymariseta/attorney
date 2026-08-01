@@ -8,6 +8,7 @@ import BrandLoader from '@/components/BrandLoader';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import VerificationGateModal from '@/components/VerificationGateModal';
 import NotificationBell from '@/components/NotificationBell';
+import { useUserEvents, type UserEvent } from '@/lib/userEvents';
 import { emailVerify, ApiError } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import {
@@ -82,6 +83,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [matterQuery, setMatterQuery] = useState('');
   const [createMatterOpen, setCreateMatterOpen] = useState(false);
+  // Bumped by a realtime notification event; NotificationBell refetches on it.
+  const [notifTick, setNotifTick] = useState(0);
 
   const reloadMe = useCallback(async () => {
     try {
@@ -113,6 +116,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [router, reloadMatters, reloadRetainers, reloadConsultations]);
 
   useEffect(() => setOpen(false), [pathname]);
+
+  // One SSE connection for the whole shell. A booking made by a client lands
+  // here (its matter room is brand new, so the channel feed can't carry it) —
+  // pull the calendar fresh, and bump the tick so the bell refetches.
+  useUserEvents(
+    useCallback(
+      (event: UserEvent) => {
+        if (event.type === 'consultation.created') {
+          reloadConsultations().catch(() => {});
+        }
+        if (event.type === 'notification') setNotifTick((n) => n + 1);
+      },
+      [reloadConsultations]
+    )
+  );
 
   if (!ready) {
     return <BrandLoader label="Loading workspace" />;
@@ -279,7 +297,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <p className="truncate text-sm font-medium">{me?.first_name} {me?.last_name}</p>
             <p className="truncate text-[11px] text-muted">{me?.email}</p>
           </div>
-          <NotificationBell />
+          <NotificationBell refreshTick={notifTick} />
         </div>
         <button onClick={onLogout} className="mt-2 w-full rounded-md border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-canvas">Log out</button>
       </div>
@@ -309,7 +327,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               className="h-10 w-auto"
             />
             <div className="ml-auto">
-              <NotificationBell />
+              <NotificationBell refreshTick={notifTick} />
             </div>
           </header>
           <EmailVerifyBanner me={me} />
