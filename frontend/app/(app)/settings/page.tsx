@@ -183,7 +183,9 @@ export default function SettingsPage() {
     try {
       const firm = await firmsApi.join(firmId);
       const updated = await lawyerProfile.get();
-      setForm(updated);
+      // Only the firm link changed — keep the user's unsaved edits (see the
+      // certificate upload below for the same reasoning).
+      setForm((f) => (f ? { ...f, firm: updated.firm, firm_detail: updated.firm_detail } : updated));
       toast.success(`You're now part of ${firm.name}.`, { title: 'Firm joined', major: true });
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Could not join firm.');
@@ -204,7 +206,7 @@ export default function SettingsPage() {
     try {
       await firmsApi.leave();
       const updated = await lawyerProfile.get();
-      setForm(updated);
+      setForm((f) => (f ? { ...f, firm: updated.firm, firm_detail: updated.firm_detail } : updated));
       toast.success('You left the firm.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Could not leave firm.');
@@ -517,7 +519,14 @@ export default function SettingsPage() {
             <label className="label">Certificate file</label>
             <CertificateFileUpload
               currentUrl={form.practising_certificate_file_url}
-              onUploaded={(updated) => setForm(updated)}
+              // Merge ONLY the new file URL. The upload PATCHes just the file, so
+              // the rest of the response is the *stored* profile — assigning it
+              // wholesale would clobber every edit typed but not yet saved.
+              onUploaded={(updated) =>
+                setForm((f) =>
+                  f ? { ...f, practising_certificate_file_url: updated.practising_certificate_file_url } : updated,
+                )
+              }
               toast={toast}
             />
           </div>

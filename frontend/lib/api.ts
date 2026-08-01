@@ -39,6 +39,9 @@ export class ApiError extends Error {
 
 function describe(body: unknown): string {
   if (!body || typeof body !== 'object') return 'Request failed';
+  // DRF renders `ValidationError('msg')` as a bare list, not an object — it has
+  // no field to name, so prefixing would print the array index ("0: msg").
+  if (Array.isArray(body)) return typeof body[0] === 'string' ? body[0] : 'Request failed';
   const obj = body as Record<string, unknown>;
   if (typeof obj.detail === 'string') return obj.detail;
   // Surface the first field error (e.g. {"amount": ["Must be > 0"]}).
@@ -46,7 +49,8 @@ function describe(body: unknown): string {
   if (first) {
     const [field, val] = first;
     const msg = Array.isArray(val) ? val[0] : val;
-    return `${field}: ${msg}`;
+    // non_field_errors is DRF's bucket for form-wide errors — not a real field.
+    return field === 'non_field_errors' ? String(msg) : `${field}: ${msg}`;
   }
   return 'Request failed';
 }
