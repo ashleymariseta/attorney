@@ -473,7 +473,7 @@ function ScopeBar({
       <span className="mx-0.5 h-4 w-px bg-line" />
       <button
         onClick={onToggleMatters}
-        title="Include your client matters as context"
+        title="Include your matters — and, for practitioners, your client book (matter counts, invoiced/paid/outstanding, last 7 days) — as context"
         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${myMatters ? 'bg-brand-dark text-white' : 'border border-line bg-white text-muted hover:border-brand'}`}
       >
         <FolderOpen size={11} /> My matters
