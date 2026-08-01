@@ -7,10 +7,12 @@ import { Suspense, useState } from 'react';
 import { CalendarCheck } from 'lucide-react';
 import { auth, ApiError } from '@/lib/api';
 
-const ROLES = [
-  ['client_individual', 'Client — Individual'],
-  ['client_business', 'Client — Business'],
-  ['lawyer', 'Lawyer'],
+/** Framed by what the person came to do, rather than by the role name we
+ *  store. `value` still maps 1:1 onto the API's role field. */
+const ROLES: { value: string; label: string; hint: string }[] = [
+  { value: 'client_individual', label: 'Looking for a Lawyer', hint: 'For myself' },
+  { value: 'client_business', label: 'Looking for a Lawyer', hint: 'For my business' },
+  { value: 'lawyer', label: 'Looking for Clients', hint: "I'm a practising lawyer" },
 ];
 
 function safeNext(raw: string | null): string {
@@ -123,10 +125,41 @@ function RegisterInner() {
                 onChange={(e) => set('password', e.target.value)} placeholder="min. 8 characters" />
             </div>
             <div>
-              <label className="label">I am a</label>
-              <select className="field" value={form.role} onChange={(e) => set('role', e.target.value)}>
-                {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
+              <label className="label" id="role-label">I&rsquo;m here because I&rsquo;m…</label>
+              <div className="space-y-2" role="radiogroup" aria-labelledby="role-label">
+                {ROLES.map((r) => {
+                  const active = form.role === r.value;
+                  return (
+                    <button
+                      key={r.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => set('role', r.value)}
+                      className={`flex w-full items-center justify-between gap-3 rounded-lg px-4 py-3 text-left transition ${
+                        active
+                          ? 'bg-brand-dark text-white shadow-sm'
+                          : 'border border-line bg-white text-ink hover:border-brand hover:bg-canvas'
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold leading-tight">{r.label}</span>
+                        <span className={`block text-xs ${active ? 'text-white/70' : 'text-muted'}`}>
+                          {r.hint}
+                        </span>
+                      </span>
+                      <span
+                        aria-hidden
+                        className={`grid h-4 w-4 shrink-0 place-items-center rounded-full border ${
+                          active ? 'border-white' : 'border-line'
+                        }`}
+                      >
+                        {active && <span className="h-2 w-2 rounded-full bg-white" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
             <button className="btn-primary w-full" disabled={loading}>
