@@ -18,8 +18,8 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _email = TextEditingController(text: 'client@attorney.test');
-  final _password = TextEditingController(text: 'ClientPass123!');
+  final _email = TextEditingController();
+  final _password = TextEditingController();
   final _otp = TextEditingController();
   String? _error;
   bool _busy = false;
