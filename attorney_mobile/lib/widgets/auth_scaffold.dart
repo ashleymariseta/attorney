@@ -38,10 +38,12 @@ class AuthScaffold extends StatelessWidget {
           // space left after the keyboard, so the header yields to the keyboard
           // (always leaving room for the inputs) and never gets too small.
           final available = constraints.maxHeight;
-          double headerH = screenH * 0.5;
+          // Keep the header compact so content-heavy screens (register) fit
+          // without scrolling. It still yields to the keyboard via `available`.
+          double headerH = screenH * 0.28;
           const formMin = 200.0;
           if (headerH > available - formMin) headerH = available - formMin;
-          if (headerH < 220) headerH = 220;
+          if (headerH < 168) headerH = 168;
           if (headerH > available) headerH = available;
 
           return Column(
@@ -159,7 +161,7 @@ class AuthScaffold extends StatelessWidget {
                   child: SafeArea(
                     top: false,
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+                      padding: const EdgeInsets.fromLTRB(24, 18, 24, 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [

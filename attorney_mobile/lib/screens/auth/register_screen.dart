@@ -116,7 +116,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             prefixIcon: Icon(LucideIcons.lock, size: 18, color: AppColors.muted),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         const Text('I want to…',
             style: TextStyle(
                 fontSize: 12,
@@ -150,7 +150,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           const SizedBox(height: 12),
           ErrorBanner(message: _error!),
         ],
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: _busy ? null : _submit,
           icon: const Icon(LucideIcons.userPlus, size: 16),
