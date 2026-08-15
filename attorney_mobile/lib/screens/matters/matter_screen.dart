@@ -524,26 +524,33 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        title: const Text('Verify payment?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('\$$amount ${p.currency} will post to the trust ledger.'),
-            if (proofUrl != null) ...[
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () =>
-                      launchUrl(Uri.parse(proofUrl), mode: LaunchMode.externalApplication),
-                  icon: const Icon(LucideIcons.receipt, size: 16),
-                  label: const Text('View proof of payment'),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+        titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+        contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        title: const Text('Verify payment?', style: TextStyle(fontSize: 16)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('\$$amount ${p.currency} will post to the trust ledger.',
+                  style: const TextStyle(fontSize: 13)),
+              if (proofUrl != null) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () =>
+                        launchUrl(Uri.parse(proofUrl), mode: LaunchMode.externalApplication),
+                    icon: const Icon(LucideIcons.eye, size: 16),
+                    label: const Text('View proof of payment'),
+                  ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
@@ -2155,7 +2162,7 @@ class _InfoDrawerSheetState extends ConsumerState<_InfoDrawerSheet> {
                       Uri.parse(p.proofOfPaymentUrl!),
                       mode: LaunchMode.externalApplication,
                     ),
-                    icon: const Icon(LucideIcons.receipt, size: 14),
+                    icon: const Icon(LucideIcons.eye, size: 14),
                     label: const Text('View proof', style: TextStyle(fontSize: 11)),
                   ),
                 ],
