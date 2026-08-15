@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,11 +56,43 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
       ep.listPaymentInvoices(),
       ep.listMatters(),
     ]);
+    TimeEntry? running;
+    try {
+      running = await ep.getRunningTimer();
+    } catch (_) {}
     return _BillablesData(
       entries: results[0] as List<Map<String, dynamic>>,
       invoices: results[1] as List<Map<String, dynamic>>,
       matters: results[2] as List<Matter>,
+      running: running,
     );
+  }
+
+  Future<void> _startTimer(int matterId, String description) async {
+    try {
+      await ref.read(endpointsProvider).startTimer(matterId, description: description);
+      await _refresh();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
+  Future<void> _stopTimer(TimeEntry running) async {
+    try {
+      final stopped = await ref.read(endpointsProvider).stopTimer(running.id);
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logged ${stopped.minutes}m · \$${stopped.amount ?? '0.00'}.')),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   Future<void> _refresh() async {
@@ -128,24 +162,36 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
               );
             }
             final data = snap.data!;
-            return TabBarView(
-              controller: _tabs,
+            return Column(
               children: [
-                _ByMatterTab(
-                  data: data,
-                  cutoff: _cutoff,
-                  range: _range,
-                  onRangeChange: (r) => setState(() => _range = r),
-                  onGenerateInvoice: _generateInvoice,
+                _TimeTrackerCard(
+                  running: data.running,
+                  matters: data.matters,
+                  onStart: _startTimer,
+                  onStop: _stopTimer,
                 ),
-                _InvoicesTab(
-                  data: data,
-                  cutoff: _cutoff,
-                  range: _range,
-                  onRangeChange: (r) => setState(() => _range = r),
-                  invStatus: _invStatus,
-                  onInvStatusChange: (s) => setState(() => _invStatus = s),
-                  onView: _viewInvoicePdf,
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabs,
+                    children: [
+                      _ByMatterTab(
+                        data: data,
+                        cutoff: _cutoff,
+                        range: _range,
+                        onRangeChange: (r) => setState(() => _range = r),
+                        onGenerateInvoice: _generateInvoice,
+                      ),
+                      _InvoicesTab(
+                        data: data,
+                        cutoff: _cutoff,
+                        range: _range,
+                        onRangeChange: (r) => setState(() => _range = r),
+                        invStatus: _invStatus,
+                        onInvStatusChange: (s) => setState(() => _invStatus = s),
+                        onView: _viewInvoicePdf,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             );
@@ -205,7 +251,8 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
 }
 
 class _BillablesData {
-  _BillablesData({required this.entries, required this.invoices, required this.matters});
+  _BillablesData({required this.entries, required this.invoices, required this.matters, this.running});
+  final TimeEntry? running;
   final List<Map<String, dynamic>> entries;
   final List<Map<String, dynamic>> invoices;
   final List<Matter> matters;
@@ -730,3 +777,257 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+
+/// Persistent time-tracker header on the Billables screen — mirrors the web
+/// TimeTracker. Shows a live ticking timer + Stop when one is running, or a
+/// Start button (pick matter + note) when idle.
+class _TimeTrackerCard extends StatefulWidget {
+  const _TimeTrackerCard({
+    required this.running,
+    required this.matters,
+    required this.onStart,
+    required this.onStop,
+  });
+  final TimeEntry? running;
+  final List<Matter> matters;
+  final Future<void> Function(int matterId, String description) onStart;
+  final Future<void> Function(TimeEntry running) onStop;
+
+  @override
+  State<_TimeTrackerCard> createState() => _TimeTrackerCardState();
+}
+
+class _TimeTrackerCardState extends State<_TimeTrackerCard> {
+  Timer? _ticker;
+  Duration _elapsed = Duration.zero;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(_TimeTrackerCard old) {
+    super.didUpdateWidget(old);
+    if (old.running?.id != widget.running?.id) _syncTicker();
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  void _syncTicker() {
+    _ticker?.cancel();
+    final r = widget.running;
+    if (r == null) {
+      setState(() => _elapsed = Duration.zero);
+      return;
+    }
+    final start = DateTime.tryParse(r.startedAt)?.toLocal();
+    void tick() {
+      if (start == null) return;
+      setState(() => _elapsed = DateTime.now().difference(start));
+    }
+
+    tick();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => tick());
+  }
+
+  String get _elapsedLabel {
+    final s = _elapsed.inSeconds;
+    final h = (s ~/ 3600).toString().padLeft(2, '0');
+    final m = ((s % 3600) ~/ 60).toString().padLeft(2, '0');
+    final sec = (s % 60).toString().padLeft(2, '0');
+    return '$h:$m:$sec';
+  }
+
+  Future<void> _openStartSheet() async {
+    if (widget.matters.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You have no matters to track time against yet.')),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _StartTimerSheet(
+        matters: widget.matters,
+        onStart: (matterId, desc) async {
+          Navigator.of(context).pop();
+          setState(() => _busy = true);
+          await widget.onStart(matterId, desc);
+          if (mounted) setState(() => _busy = false);
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.running;
+    final isRunning = r != null;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: isRunning
+            ? const LinearGradient(colors: [AppColors.brand, AppColors.brandDarker])
+            : null,
+        color: isRunning ? null : AppColors.cardTint,
+        border: Border.all(color: isRunning ? Colors.transparent : AppColors.line),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isRunning ? LucideIcons.timer : LucideIcons.play,
+            color: isRunning ? Colors.white : AppColors.brandDark,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isRunning ? 'Tracking' : 'Time tracker',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                    color: isRunning ? Colors.white70 : AppColors.muted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                if (isRunning) ...[
+                  Text(
+                    _elapsedLabel,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  Text(
+                    r.matterTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                ] else
+                  const Text(
+                    'Start a timer against a matter',
+                    style: TextStyle(fontSize: 13, color: AppColors.ink),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (isRunning)
+            FilledButton.icon(
+              onPressed: _busy ? null : () => widget.onStop(r),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.brandDark,
+              ),
+              icon: const Icon(LucideIcons.square, size: 14),
+              label: const Text('Stop'),
+            )
+          else
+            FilledButton.icon(
+              onPressed: _busy ? null : _openStartSheet,
+              icon: const Icon(LucideIcons.play, size: 14),
+              label: const Text('Start'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StartTimerSheet extends StatefulWidget {
+  const _StartTimerSheet({required this.matters, required this.onStart});
+  final List<Matter> matters;
+  final Future<void> Function(int matterId, String description) onStart;
+
+  @override
+  State<_StartTimerSheet> createState() => _StartTimerSheetState();
+}
+
+class _StartTimerSheetState extends State<_StartTimerSheet> {
+  int? _matterId;
+  final _desc = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _matterId = widget.matters.isNotEmpty ? widget.matters.first.id : null;
+  }
+
+  @override
+  void dispose() {
+    _desc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+          left: 16,
+          right: 16,
+          top: 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Start a timer',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: _matterId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Matter'),
+              items: [
+                for (final m in widget.matters)
+                  DropdownMenuItem(
+                    value: m.id,
+                    child: Text(m.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _matterId = v),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _desc,
+              decoration: const InputDecoration(
+                labelText: 'What are you working on? (optional)',
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _matterId == null
+                  ? null
+                  : () => widget.onStart(_matterId!, _desc.text.trim()),
+              icon: const Icon(LucideIcons.play, size: 16),
+              label: const Text('Start timer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
