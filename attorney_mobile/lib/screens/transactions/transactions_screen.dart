@@ -188,57 +188,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
-  Future<void> _comment(_Tx t) async {
-    final pid = t.paymentId;
-    if (pid == null) return;
-    final ctrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Add comment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'On ${t.matterTitle} · ${t.label} · \$${t.amount} ${t.currency}',
-              style: const TextStyle(fontSize: 12, color: AppColors.muted),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Comment',
-                hintText: 'Add a note for the matter…',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Post')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final body = ctrl.text.trim();
-    if (body.isEmpty) return;
-    try {
-      await ref.read(endpointsProvider).commentPayment(pid, body);
-      await _refresh();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Comment added.')),
-        );
-      }
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-      }
-    }
-  }
-
   void _viewProof(String url, String title) {
     showDialog<void>(
       context: context,
@@ -362,7 +311,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       onTap: () => _openDetail(t),
                       onApprove: (id) => _approve(id),
                       onReject: () => _reject(t),
-                      onComment: () => _comment(t),
                       onViewProof: t.proofUrl != null
                           ? () => _viewProof(t.proofUrl!, 'Proof of payment · ${t.label}')
                           : null,
@@ -384,7 +332,6 @@ class _TxTile extends StatelessWidget {
     required this.onTap,
     required this.onApprove,
     required this.onReject,
-    required this.onComment,
     required this.onViewProof,
   });
   final _Tx t;
@@ -393,7 +340,6 @@ class _TxTile extends StatelessWidget {
   final VoidCallback onTap;
   final Future<void> Function(int paymentId) onApprove;
   final VoidCallback onReject;
-  final VoidCallback onComment;
   final VoidCallback? onViewProof;
 
   @override
@@ -410,7 +356,7 @@ class _TxTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: AppColors.cardTint,
           border: Border.all(color: AppColors.line),
@@ -419,62 +365,74 @@ class _TxTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            // Dark-teal header band — matter/type + amount above the line.
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [AppColors.brandDark, AppColors.brand],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          t.matterTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${t.kind == 'trust' ? 'Trust' : 'Payment'} · ${t.label}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.85)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        t.matterTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${t.kind == 'trust' ? 'Trust' : 'Payment'} · ${t.label}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11, color: AppColors.muted),
-                      ),
+                      Text('\$${t.amount}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
+                      if (created != null)
+                        Text(
+                          DateFormat('MMM d').format(created.toLocal()),
+                          style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: 0.75)),
+                        ),
                     ],
                   ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text('\$${t.amount}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
-                    if (created != null)
-                      Text(
-                        DateFormat('MMM d').format(created.toLocal()),
-                        style: const TextStyle(fontSize: 10, color: AppColors.muted),
-                      ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                StatusPill(status: t.status, label: t.statusDisplay),
-                const Spacer(),
-                _ActionsButton(
-                  actions: [
-                    _MenuAction(key: 'details', label: 'View details', icon: LucideIcons.eye, onTap: onTap),
-                    if (onViewProof != null)
-                      _MenuAction(key: 'view-pop', label: 'View POP', icon: LucideIcons.fileText, onTap: onViewProof!),
-                    if (canApprove)
-                      _MenuAction(key: 'approve', label: 'Approve', icon: LucideIcons.thumbsUp, tone: _Tone.emerald, onTap: () {
-                        if (t.paymentId != null) onApprove(t.paymentId!);
-                      }),
-                    if (canReject)
-                      _MenuAction(key: 'reject', label: 'Reject', icon: LucideIcons.thumbsDown, tone: _Tone.red, onTap: onReject),
-                    if (isPayment)
-                      _MenuAction(key: 'comment', label: 'Comment', icon: LucideIcons.messageSquare, onTap: onComment),
-                  ],
-                ),
-              ],
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+              child: Row(
+                children: [
+                  StatusPill(status: t.status, label: t.statusDisplay),
+                  const Spacer(),
+                  _ActionsButton(
+                    actions: [
+                      _MenuAction(key: 'details', label: 'View details', icon: LucideIcons.eye, onTap: onTap),
+                      if (onViewProof != null)
+                        _MenuAction(key: 'view-pop', label: 'View POP', icon: LucideIcons.fileText, onTap: onViewProof!),
+                      if (canApprove)
+                        _MenuAction(key: 'approve', label: 'Approve', icon: LucideIcons.thumbsUp, tone: _Tone.emerald, onTap: () {
+                          if (t.paymentId != null) onApprove(t.paymentId!);
+                        }),
+                      if (canReject)
+                        _MenuAction(key: 'reject', label: 'Reject', icon: LucideIcons.thumbsDown, tone: _Tone.red, onTap: onReject),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -556,31 +514,40 @@ class _Stat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
         color: AppColors.cardTint,
         border: Border.all(color: AppColors.line),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 12, color: AppColors.muted),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  label.toUpperCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppColors.muted, letterSpacing: 0.5),
+          // Tilted, enlarged watermark icon (home / clients stat pattern).
+          DecoIcon(icon: icon, size: 56),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, size: 12, color: AppColors.muted),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        label.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppColors.muted, letterSpacing: 0.5),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
+              ],
+            ),
           ),
-          const SizedBox(height: 4),
-          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
         ],
       ),
     );

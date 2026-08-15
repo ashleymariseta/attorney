@@ -123,11 +123,38 @@ class _BookingsScreenState extends ConsumerState<BookingsScreen> {
                     );
                   }
                   final all = snap.data ?? const <Consultation>[];
-                  return _WeekList(
+                  // Bookings past the visible week are invisible in the grid
+                  // until you page forward — surface the next few (web parity).
+                  final weekEnd = _weekStart.add(const Duration(days: 7));
+                  final upcoming = all.where((c) {
+                    final dt = DateTime.tryParse(c.scheduledTime)?.toLocal();
+                    if (dt == null) return false;
+                    final s = c.status.toLowerCase();
+                    return !dt.isBefore(weekEnd) && s != 'cancelled' && s != 'completed';
+                  }).toList()
+                    ..sort((a, b) => a.scheduledTime.compareTo(b.scheduledTime));
+                  final upcomingTop = upcoming.take(5).toList();
+
+                  final grid = _WeekList(
                     weekStart: _weekStart,
                     all: all,
                     isLawyer: isLawyer,
                     onTap: _openDetail,
+                  );
+                  if (upcomingTop.isEmpty) return grid;
+                  return Column(
+                    children: [
+                      _UpcomingStrip(
+                        upcoming: upcomingTop,
+                        onTap: _openDetail,
+                        onJump: () => setState(
+                          () => _weekStart = _startOfWeek(
+                            DateTime.tryParse(upcomingTop.first.scheduledTime)?.toLocal() ?? DateTime.now(),
+                          ),
+                        ),
+                      ),
+                      Expanded(child: grid),
+                    ],
                   );
                 },
               ),
@@ -294,6 +321,128 @@ class _WeekList extends StatelessWidget {
   }
 }
 
+/// Status → colours, shared by the week grid and the "Coming up later" strip.
+/// Mirrors STATUS_STYLE in frontend/app/(app)/bookings/page.tsx.
+({Color bg, Color border, Color fg, TextDecoration deco}) bookingTone(String status) {
+  final s = status.toLowerCase();
+  if (s == 'awaiting_payment') {
+    return (bg: const Color(0xFFFEF3C7), border: const Color(0xFFFBBF24), fg: const Color(0xFF92400E), deco: TextDecoration.none);
+  }
+  if (s == 'pending') {
+    return (bg: const Color(0xFFFDE68A), border: const Color(0xFFD97706), fg: const Color(0xFF78350F), deco: TextDecoration.none);
+  }
+  if (s == 'confirmed') {
+    return (bg: AppColors.brand, border: AppColors.brandDark, fg: Colors.white, deco: TextDecoration.none);
+  }
+  if (s == 'completed') {
+    return (bg: const Color(0xFFE2E8F0), border: const Color(0xFF94A3B8), fg: const Color(0xFF334155), deco: TextDecoration.none);
+  }
+  if (s == 'cancelled') {
+    return (bg: AppColors.line, border: AppColors.line, fg: AppColors.muted, deco: TextDecoration.lineThrough);
+  }
+  return (bg: AppColors.surface, border: AppColors.line, fg: AppColors.ink, deco: TextDecoration.none);
+}
+
+/// "Coming up later" — surfaces bookings scheduled beyond the visible week as
+/// tappable chips, so a slot booked further out isn't invisible until you page
+/// forward. Mirrors the web upcomingBeyond strip.
+class _UpcomingStrip extends StatelessWidget {
+  const _UpcomingStrip({required this.upcoming, required this.onTap, required this.onJump});
+  final List<Consultation> upcoming;
+  final void Function(Consultation c) onTap;
+  final VoidCallback onJump;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      decoration: const BoxDecoration(
+        color: AppColors.canvas,
+        border: Border(bottom: BorderSide(color: AppColors.line)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'COMING UP LATER',
+                  style: TextStyle(
+                    fontSize: 11,
+                    letterSpacing: 0.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onJump,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Jump to next', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 46,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 8),
+              itemCount: upcoming.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final c = upcoming[i];
+                final dt = DateTime.tryParse(c.scheduledTime)?.toLocal();
+                final tone = bookingTone(c.status);
+                final dayStr = dt != null ? DateFormat('EEE, MMM d').format(dt) : '';
+                final timeStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
+                return GestureDetector(
+                  onTap: () => onTap(c),
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 180),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: tone.bg,
+                      border: Border.all(color: tone.border),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x14000000), blurRadius: 3, offset: Offset(0, 1)),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          dayStr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: tone.fg, decoration: tone.deco, height: 1.1),
+                        ),
+                        Text(
+                          '$timeStr · ${c.matterTitle}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 10, color: tone.fg.withValues(alpha: 0.85), decoration: tone.deco),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DayHeaderCell extends StatelessWidget {
   const _DayHeaderCell({required this.date, required this.isToday});
   final DateTime date;
@@ -358,26 +507,6 @@ class _DayColumn extends StatelessWidget {
   final bool isLawyer;
   final void Function(Consultation c) onTap;
 
-  ({Color bg, Color border, Color fg, TextDecoration deco}) _toneFor(String status) {
-    final s = status.toLowerCase();
-    if (s == 'awaiting_payment') {
-      return (bg: const Color(0xFFFEF3C7), border: const Color(0xFFFBBF24), fg: const Color(0xFF92400E), deco: TextDecoration.none);
-    }
-    if (s == 'pending') {
-      return (bg: const Color(0xFFFDE68A), border: const Color(0xFFD97706), fg: const Color(0xFF78350F), deco: TextDecoration.none);
-    }
-    if (s == 'confirmed') {
-      return (bg: AppColors.brand, border: AppColors.brandDark, fg: Colors.white, deco: TextDecoration.none);
-    }
-    if (s == 'completed') {
-      return (bg: const Color(0xFFE2E8F0), border: const Color(0xFF94A3B8), fg: const Color(0xFF334155), deco: TextDecoration.none);
-    }
-    if (s == 'cancelled') {
-      return (bg: AppColors.line, border: AppColors.line, fg: AppColors.muted, deco: TextDecoration.lineThrough);
-    }
-    return (bg: AppColors.surface, border: AppColors.line, fg: AppColors.ink, deco: TextDecoration.none);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -406,7 +535,7 @@ class _DayColumn extends StatelessWidget {
               if (dt == null) return const SizedBox.shrink();
               final top = (dt.hour - startHour + dt.minute / 60) * hourPx;
               final height = (c.durationMinutes / 60 * hourPx).clamp(28.0, double.infinity);
-              final tone = _toneFor(c.status);
+              final tone = bookingTone(c.status);
               final timeStr = DateFormat('HH:mm').format(dt);
               return Positioned(
                 top: top,
