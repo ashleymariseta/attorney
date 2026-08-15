@@ -151,6 +151,10 @@ class _LawyerProfileScreenState extends ConsumerState<LawyerProfileScreen> {
                             CircleAvatar(
                               radius: 36,
                               backgroundColor: AppColors.brandDark,
+                              foregroundImage: (lawyer.avatarUrl != null &&
+                                      lawyer.avatarUrl!.isNotEmpty)
+                                  ? NetworkImage(lawyer.avatarUrl!)
+                                  : null,
                               child: Text(
                                 initials.toUpperCase(),
                                 style: const TextStyle(
