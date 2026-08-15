@@ -1195,7 +1195,7 @@ class _DocumentCard extends StatelessWidget {
         mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
+            constraints: const BoxConstraints(maxWidth: 256),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.cardTint,
@@ -1205,13 +1205,13 @@ class _DocumentCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(height: 8, decoration: const BoxDecoration(color: AppColors.brand, borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
+                  Container(height: 5, decoration: const BoxDecoration(color: AppColors.brand, borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
                         CircleAvatar(
-                          radius: 18,
+                          radius: 15,
                           backgroundColor: AppColors.brandLight.withValues(alpha: 0.4),
                           child: Icon(isDraft ? LucideIcons.edit : LucideIcons.fileText, color: AppColors.brandDark),
                         ),
@@ -1281,7 +1281,7 @@ class _PaymentCard extends StatelessWidget {
         mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
+            constraints: const BoxConstraints(maxWidth: 256),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.cardTint,
@@ -1291,7 +1291,7 @@ class _PaymentCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(height: 8, decoration: const BoxDecoration(color: Color(0xFF047857), borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
+                  Container(height: 5, decoration: const BoxDecoration(color: Color(0xFF047857), borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Column(
@@ -1300,7 +1300,7 @@ class _PaymentCard extends StatelessWidget {
                         Row(
                           children: [
                             const CircleAvatar(
-                              radius: 18,
+                              radius: 15,
                               backgroundColor: Color(0xFFECFDF5),
                               child: Icon(LucideIcons.receipt, color: Color(0xFF047857)),
                             ),
@@ -1396,7 +1396,7 @@ class _ConsultationCard extends StatelessWidget {
         mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
+            constraints: const BoxConstraints(maxWidth: 256),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.cardTint,
@@ -1406,7 +1406,7 @@ class _ConsultationCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(height: 8, decoration: const BoxDecoration(color: Color(0xFF0369A1), borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
+                  Container(height: 5, decoration: const BoxDecoration(color: Color(0xFF0369A1), borderRadius: BorderRadius.vertical(top: Radius.circular(14)))),
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Column(
@@ -1415,7 +1415,7 @@ class _ConsultationCard extends StatelessWidget {
                         Row(
                           children: [
                             const CircleAvatar(
-                              radius: 18,
+                              radius: 15,
                               backgroundColor: Color(0xFFEFF6FF),
                               child: Icon(LucideIcons.calendar, color: Color(0xFF0369A1)),
                             ),
