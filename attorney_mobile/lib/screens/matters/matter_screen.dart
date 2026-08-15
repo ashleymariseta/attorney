@@ -519,7 +519,6 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
 
   Future<void> _approvePayment(Payment p) async {
     final amount = double.tryParse(p.amount)?.toStringAsFixed(2) ?? p.amount;
-    final proofUrl = p.proofOfPaymentUrl;
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -531,26 +530,8 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
         title: const Text('Verify payment?', style: TextStyle(fontSize: 16)),
         content: SizedBox(
           width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('\$$amount ${p.currency} will post to the trust ledger.',
-                  style: const TextStyle(fontSize: 13)),
-              if (proofUrl != null) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () =>
-                        launchUrl(Uri.parse(proofUrl), mode: LaunchMode.externalApplication),
-                    icon: const Icon(LucideIcons.eye, size: 16),
-                    label: const Text('View proof of payment'),
-                  ),
-                ),
-              ],
-            ],
-          ),
+          child: Text('\$$amount ${p.currency} will post to the trust ledger.',
+              style: const TextStyle(fontSize: 13)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
@@ -1360,6 +1341,15 @@ class _PaymentCard extends StatelessWidget {
                                 child: const Text('Pay', style: TextStyle(fontSize: 11)),
                               ),
                             if (canReview && isPending && hasProof) ...[
+                              IconButton(
+                                onPressed: () => launchUrl(
+                                  Uri.parse(p.proofOfPaymentUrl!),
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                                icon: const Icon(LucideIcons.eye, color: AppColors.muted, size: 18),
+                                tooltip: 'View proof',
+                                visualDensity: VisualDensity.compact,
+                              ),
                               IconButton(
                                 onPressed: onApprove,
                                 icon: const Icon(LucideIcons.thumbsUp, color: Color(0xFF047857), size: 18),
