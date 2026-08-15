@@ -518,14 +518,36 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
   }
 
   Future<void> _approvePayment(Payment p) async {
+    final amount = double.tryParse(p.amount)?.toStringAsFixed(2) ?? p.amount;
+    final proofUrl = p.proofOfPaymentUrl;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         title: const Text('Verify payment?'),
-        content: Text('\$${double.tryParse(p.amount)?.toStringAsFixed(2) ?? p.amount} ${p.currency} will post to the trust ledger.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('\$$amount ${p.currency} will post to the trust ledger.'),
+            if (proofUrl != null) ...[
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      launchUrl(Uri.parse(proofUrl), mode: LaunchMode.externalApplication),
+                  icon: const Icon(LucideIcons.receipt, size: 16),
+                  label: const Text('View proof of payment'),
+                ),
+              ),
+            ],
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Verify')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Verify')),
         ],
       ),
     );
@@ -540,19 +562,22 @@ class _MatterScreenState extends ConsumerState<MatterScreen> {
   }
 
   Future<void> _rejectPayment(Payment p) async {
+    final c = TextEditingController();
     final note = await showDialog<String>(
       context: context,
-      builder: (_) {
-        final c = TextEditingController();
-        return AlertDialog(
-          title: const Text('Reject payment'),
-          content: TextField(controller: c, decoration: const InputDecoration(labelText: 'Reason (optional)')),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, null), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, c.text), child: const Text('Reject')),
-          ],
-        );
-      },
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        title: const Text('Reject payment'),
+        content: TextField(
+          controller: c,
+          decoration: const InputDecoration(labelText: 'Reason (optional)'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(null), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(c.text), child: const Text('Reject')),
+        ],
+      ),
     );
     if (note == null) return;
     try {
@@ -2122,6 +2147,16 @@ class _InfoDrawerSheetState extends ConsumerState<_InfoDrawerSheet> {
                     onPressed: () => widget.onUploadProof(p),
                     icon: const Icon(LucideIcons.upload, size: 14),
                     label: const Text('Upload proof', style: TextStyle(fontSize: 11)),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(
+                      Uri.parse(p.proofOfPaymentUrl!),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    icon: const Icon(LucideIcons.receipt, size: 14),
+                    label: const Text('View proof', style: TextStyle(fontSize: 11)),
                   ),
                 ],
               ],

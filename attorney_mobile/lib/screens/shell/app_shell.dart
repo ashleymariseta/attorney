@@ -158,6 +158,12 @@ class _AppDrawerState extends ConsumerState<_AppDrawer> {
                     label: isLawyer ? 'Settings & Rate' : 'Settings & KYC',
                     onTap: () => go(Routes.settings),
                   ),
+                  if (isLawyer)
+                    _DrawerTile(
+                      icon: LucideIcons.clock,
+                      label: 'Billables',
+                      onTap: () => go(Routes.billables),
+                    ),
                   if (isAdmin)
                     _DrawerTile(icon: LucideIcons.key, label: 'LLM usage (admin)', onTap: () => go(Routes.adminLlmUsage)),
                   _MattersSection(
