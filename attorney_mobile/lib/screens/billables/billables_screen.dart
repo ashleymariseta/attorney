@@ -10,7 +10,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../api/endpoints.dart';
 import '../../api/models.dart';
 import '../../router.dart';
-import '../../services/timer_notification_service.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/common.dart';
@@ -42,9 +41,6 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
     _load = _fetch();
-    // Ask for the notification permission the first time a lawyer opens
-    // Billables, so the ongoing timer notification can actually show.
-    TimerNotificationService.ensurePermission();
   }
 
   @override
@@ -64,12 +60,6 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
     try {
       running = await ep.getRunningTimer();
     } catch (_) {}
-    // Keep the ongoing notification in step with server truth — covers a timer
-    // started on the web, or the app being relaunched while one is running.
-    await TimerNotificationService.sync(
-      matterTitle: running?.matterTitle,
-      startedAt: running == null ? null : DateTime.tryParse(running.startedAt),
-    );
     return _BillablesData(
       entries: results[0] as List<Map<String, dynamic>>,
       invoices: results[1] as List<Map<String, dynamic>>,
@@ -80,13 +70,7 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
 
   Future<void> _startTimer(int matterId, String description) async {
     try {
-      final started = await ref.read(endpointsProvider).startTimer(matterId, description: description);
-      // Surface the running timer as an ongoing lock-screen notification.
-      final startAt = DateTime.tryParse(started.startedAt) ?? DateTime.now();
-      await TimerNotificationService.start(
-        matterTitle: started.matterTitle,
-        startedAt: startAt,
-      );
+      await ref.read(endpointsProvider).startTimer(matterId, description: description);
       await _refresh();
     } on ApiException catch (e) {
       if (mounted) {
@@ -98,7 +82,6 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
   Future<void> _stopTimer(TimeEntry running) async {
     try {
       final stopped = await ref.read(endpointsProvider).stopTimer(running.id);
-      await TimerNotificationService.stop();
       await _refresh();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

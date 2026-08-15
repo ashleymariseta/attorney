@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'router.dart';
-import 'services/timer_notification_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/user_events_listener.dart';
 
@@ -11,10 +10,6 @@ import 'widgets/user_events_listener.dart';
 final rootMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Prepare the foreground-service channel used by the billables timer's
-  // ongoing lock-screen notification.
-  TimerNotificationService.init();
   runApp(const ProviderScope(child: AttorneyApp()));
 }
 
