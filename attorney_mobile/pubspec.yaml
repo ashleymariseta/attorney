@@ -1,7 +1,7 @@
 name: attorney_mobile
 description: Attorney — Lawyer-on-demand mobile app (mirrors the web product).
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.12.0
@@ -34,6 +34,7 @@ dependencies:
   lucide_icons_flutter: ^3.1.14+2
   audioplayers: ^6.7.1
   google_sign_in: ^7.2.0
+  flutter_foreground_task: ^10.0.0
 
 dev_dependencies:
   flutter_test:

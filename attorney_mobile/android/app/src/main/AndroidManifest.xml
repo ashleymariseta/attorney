@@ -1,7 +1,13 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Required for the app to reach the API in release builds (the debug
          manifest declares this only for dev/hot-reload). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Ongoing lock-screen notification for the running billables timer
+         (flutter_foreground_task). FOREGROUND_SERVICE + WAKE_LOCK +
+         POST_NOTIFICATIONS are contributed by the plugin manifest; the
+         dataSync type permission is required on Android 14+ (targetSdk 34+). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <application
         android:label="Legal Online"
         android:name="${applicationName}"
@@ -28,6 +34,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Re-declare the plugin's foreground service to attach the
+             foregroundServiceType required on Android 14+. The android:name
+             MUST match the plugin's service exactly (attribute-merge). -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:node="merge" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
