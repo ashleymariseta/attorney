@@ -18,7 +18,7 @@ if (hasKeystore) {
 }
 
 android {
-    namespace = "com.attorney.attorney_mobile"
+    namespace = "com.dataimprint.legalonline"
     // file_picker (and any plugin pulling flutter_plugin_android_lifecycle
     // ≥ 2.0.28) now requires Android compileSdk 36+. Pin it here +
     // mirror it for every plugin subproject in android/build.gradle.kts.
@@ -31,9 +31,9 @@ android {
     }
 
     defaultConfig {
-        // Store-facing application ID (Play Store). The internal `namespace`
-        // above stays on the original package — only the app ID needs to match
-        // the brand/domain.
+        // Store-facing application ID (Play Store). Kept in sync with the
+        // `namespace` and the MainActivity package so the launcher can resolve
+        // the activity (a mismatch throws "Activity class does not exist").
         applicationId = "com.dataimprint.legalonline"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
