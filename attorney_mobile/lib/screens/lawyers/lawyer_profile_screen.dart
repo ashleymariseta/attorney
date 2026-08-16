@@ -357,7 +357,7 @@ class _LawyerProfileScreenState extends ConsumerState<LawyerProfileScreen> {
                                 spacing: 6,
                                 runSpacing: 6,
                                 children: [
-                                  for (final j in p.jurisdictions) _badge(j),
+                                  for (final j in p.jurisdictions) _badge(jurisdictionChipLabel(j)),
                                 ],
                               ),
                       ),

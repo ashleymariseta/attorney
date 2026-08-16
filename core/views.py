@@ -1370,6 +1370,150 @@ class TransactionsExportView(APIView):
         return response
 
 
+class TransactionsExportPdfView(APIView):
+    """Same ledger as :class:`TransactionsExportView`, rendered as a branded
+    PDF statement (reportlab) so the user can download/print a tidy summary
+    of every payment + trust entry with a running total."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from io import BytesIO
+        from django.http import FileResponse
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import (
+            Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+        )
+
+        user = request.user
+        admin = _is_platform_admin(user)
+
+        payments = Payment.objects.select_related('matter')
+        trust = TrustTransaction.objects.select_related('matter')
+        if not admin:
+            scope = Q(matter__client=user) | Q(matter__lawyers=user)
+            payments = payments.filter(scope).distinct()
+            trust = trust.filter(scope).distinct()
+
+        rows = []
+        for p in payments:
+            rows.append({
+                'id': f'INV-{str(p.id).zfill(5)}',
+                'created_at': p.created_at,
+                'kind': 'Payment',
+                'matter': p.matter.title,
+                'label': p.get_purpose_display(),
+                'amount': p.amount,
+                'currency': p.currency,
+                'status': p.get_status_display(),
+            })
+        for t in trust:
+            rows.append({
+                'id': f'TRX-{str(t.id).zfill(5)}',
+                'created_at': t.created_at,
+                'kind': 'Trust',
+                'matter': t.matter.title,
+                'label': t.get_transaction_type_display(),
+                'amount': t.amount,
+                'currency': t.currency,
+                'status': t.get_status_display(),
+            })
+        rows.sort(key=lambda r: r['created_at'], reverse=True)
+
+        brand_dark = colors.HexColor('#082826')
+        brand = colors.HexColor('#0f766e')
+        muted = colors.HexColor('#64748b')
+        line = colors.HexColor('#e5e7eb')
+        zebra = colors.HexColor('#f8fafc')
+
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(name='ATSmall', fontName='Helvetica', fontSize=8, textColor=muted, leading=10))
+        styles.add(ParagraphStyle(name='ATBrand', fontName='Helvetica-Bold', fontSize=15, textColor=brand, leading=17))
+        styles.add(ParagraphStyle(name='ATCell', fontName='Helvetica', fontSize=8, textColor=brand_dark, leading=10))
+        styles.add(ParagraphStyle(name='ATHead', fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, leading=10))
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=landscape(A4),
+            leftMargin=16 * mm,
+            rightMargin=16 * mm,
+            topMargin=16 * mm,
+            bottomMargin=16 * mm,
+            title='Transactions statement',
+        )
+
+        elements = []
+        header = Table(
+            [[
+                Paragraph('ATTORNEY', styles['ATBrand']),
+                Paragraph(
+                    f'Transactions statement · {timezone.now().date().isoformat()}',
+                    styles['ATSmall'],
+                ),
+            ]],
+            colWidths=[None, 90 * mm],
+        )
+        header.setStyle(TableStyle([
+            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
+            ('LINEBELOW', (0, 0), (-1, 0), 1, line),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ]))
+        elements.append(header)
+        elements.append(Spacer(1, 12))
+
+        data = [[
+            Paragraph('ID', styles['ATHead']),
+            Paragraph('Date', styles['ATHead']),
+            Paragraph('Kind', styles['ATHead']),
+            Paragraph('Matter', styles['ATHead']),
+            Paragraph('Label', styles['ATHead']),
+            Paragraph('Amount', styles['ATHead']),
+            Paragraph('Status', styles['ATHead']),
+        ]]
+        for r in rows:
+            data.append([
+                Paragraph(r['id'], styles['ATCell']),
+                Paragraph(r['created_at'].date().isoformat(), styles['ATCell']),
+                Paragraph(r['kind'], styles['ATCell']),
+                Paragraph(r['matter'], styles['ATCell']),
+                Paragraph(r['label'], styles['ATCell']),
+                Paragraph(f"{r['amount']} {r['currency']}", styles['ATCell']),
+                Paragraph(r['status'], styles['ATCell']),
+            ])
+        if not rows:
+            data.append([Paragraph('No transactions yet.', styles['ATCell'])] + [''] * 6)
+
+        table = Table(
+            data,
+            colWidths=[24 * mm, 22 * mm, 18 * mm, 78 * mm, 55 * mm, 34 * mm, 34 * mm],
+            repeatRows=1,
+        )
+        style = [
+            ('BACKGROUND', (0, 0), (-1, 0), brand_dark),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('LINEBELOW', (0, 0), (-1, -1), 0.5, line),
+        ]
+        for i in range(1, len(data)):
+            if i % 2 == 0:
+                style.append(('BACKGROUND', (0, i), (-1, i), zebra))
+        table.setStyle(TableStyle(style))
+        elements.append(table)
+
+        doc.build(elements)
+        buf.seek(0)
+        filename = f'transactions-{timezone.now().date().isoformat()}.pdf'
+        return FileResponse(buf, as_attachment=True, filename=filename, content_type='application/pdf')
+
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     """Throttled token endpoint with simple account lockout + optional 2FA.
 

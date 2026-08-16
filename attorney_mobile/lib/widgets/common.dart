@@ -74,6 +74,32 @@ const countryNames = <String, String>{
   'AE': 'United Arab Emirates',
 };
 
+/// Reverse lookup: full country name → ISO code. Built once from
+/// [countryNames], plus a few common aliases lawyers type free-hand.
+final Map<String, String> _nameToCode = {
+  for (final e in countryNames.entries) e.value.toLowerCase(): e.key,
+  'uk': 'GB', 'united kingdom of great britain and northern ireland': 'GB',
+  'usa': 'US', 'united states of america': 'US', 'uae': 'AE',
+  'rsa': 'ZA', 'south africa (rsa)': 'ZA', 'england': 'GB', 'scotland': 'GB',
+};
+
+/// Flag emoji for a jurisdiction stored as a free-text name (e.g.
+/// "Zimbabwe"). Returns '' when the name can't be resolved to a country so
+/// callers can fall back to showing the raw text.
+String flagForJurisdiction(String? name) {
+  if (name == null) return '';
+  final code = _nameToCode[name.trim().toLowerCase()];
+  return code == null ? '' : flagForCountry(code);
+}
+
+/// Compact chip label for a jurisdiction: "🇿🇼 ZW" when resolvable (flag +
+/// ISO code, never the full country name), else the raw text unchanged.
+String jurisdictionChipLabel(String name) {
+  final code = _nameToCode[name.trim().toLowerCase()];
+  if (code == null) return name;
+  return '${flagForCountry(code)} $code';
+}
+
 /// Skeleton block — quick shimmer-less loader.
 class Skeleton extends StatelessWidget {
   const Skeleton({super.key, this.height = 14, this.width, this.radius = 6});

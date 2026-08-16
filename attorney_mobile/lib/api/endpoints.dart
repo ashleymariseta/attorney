@@ -323,6 +323,13 @@ class Endpoints {
   Future<Map<String, dynamic>> createMatter(Map<String, dynamic> payload) =>
       _post('/api/v1/matters/', (j) => j as Map<String, dynamic>, data: payload);
 
+  /// Lawyer opens a matter for a client — either an existing client
+  /// (`client_id`) or a new contact who gets invited by email
+  /// (`contact: {first_name, last_name, email?, phone_number?}`).
+  /// Returns the created Matter plus `invited` / `client_email` flags.
+  Future<Map<String, dynamic>> createMatterForClient(Map<String, dynamic> payload) =>
+      _post('/api/v1/matters/create-for-client/', (j) => j as Map<String, dynamic>, data: payload);
+
   // ---- Matters ----
 
   Future<List<Matter>> listMatters() => _get('/api/v1/matters/', (j) {
@@ -399,6 +406,19 @@ class Endpoints {
     try {
       final res = await _d.get<List<int>>(
         '/api/v1/transactions/export.csv',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return res.data ?? const [];
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// Streams PDF bytes for the branded transactions statement.
+  Future<List<int>> downloadTransactionsPdf() async {
+    try {
+      final res = await _d.get<List<int>>(
+        '/api/v1/transactions/export.pdf',
         options: Options(responseType: ResponseType.bytes),
       );
       return res.data ?? const [];

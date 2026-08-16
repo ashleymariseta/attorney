@@ -66,6 +66,16 @@ class _MattersListScreenState extends ConsumerState<MattersListScreen> {
         ),
         title: const Text('Matters'),
       ),
+      floatingActionButton: isLawyer
+          ? FloatingActionButton.extended(
+              onPressed: () async {
+                await context.push(Routes.createMatter);
+                if (mounted) _refresh();
+              },
+              icon: const Icon(LucideIcons.folderPlus),
+              label: const Text('New matter'),
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<List<Matter>>(

@@ -75,19 +75,23 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     if (mounted) setState(() => _load = Future.value(fresh));
   }
 
-  Future<void> _exportCsv() async {
+  Future<void> _export(String format) async {
+    final isPdf = format == 'pdf';
     setState(() => _exporting = true);
     try {
-      final bytes = await ref.read(endpointsProvider).downloadTransactionsCsv();
+      final ep = ref.read(endpointsProvider);
+      final bytes = isPdf
+          ? await ep.downloadTransactionsPdf()
+          : await ep.downloadTransactionsCsv();
       final dir = Directory.systemTemp;
       final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final file = File('${dir.path}/transactions-$today.csv');
+      final file = File('${dir.path}/transactions-$today.$format');
       await file.writeAsBytes(bytes, flush: true);
       final uri = Uri.file(file.path);
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ok ? 'CSV saved to ${file.path}' : 'Saved to ${file.path}')),
+          SnackBar(content: Text(ok ? '${format.toUpperCase()} saved to ${file.path}' : 'Saved to ${file.path}')),
         );
       }
     } on ApiException catch (e) {
@@ -219,13 +223,34 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         ),
         title: const Text('Transactions'),
         actions: [
-          IconButton(
-            tooltip: 'Export CSV',
-            icon: _exporting
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(LucideIcons.download),
-            onPressed: _exporting ? null : _exportCsv,
-          ),
+          _exporting
+              ? const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              : PopupMenuButton<String>(
+                  tooltip: 'Export',
+                  icon: const Icon(LucideIcons.download),
+                  onSelected: _export,
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'pdf',
+                      child: Row(children: [
+                        Icon(LucideIcons.fileText, size: 16),
+                        SizedBox(width: 8),
+                        Text('Export PDF'),
+                      ]),
+                    ),
+                    PopupMenuItem(
+                      value: 'csv',
+                      child: Row(children: [
+                        Icon(LucideIcons.table, size: 16),
+                        SizedBox(width: 8),
+                        Text('Export CSV'),
+                      ]),
+                    ),
+                  ],
+                ),
         ],
       ),
       body: RefreshIndicator(

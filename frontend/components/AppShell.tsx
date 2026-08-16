@@ -23,6 +23,7 @@ import {
   matters as mattersApi,
   retainers as retainersApi,
   consultations as consultationsApi,
+  aiCredits,
   isAuthed,
   type Matter,
   type Retainer,
@@ -83,6 +84,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [matterQuery, setMatterQuery] = useState('');
   const [createMatterOpen, setCreateMatterOpen] = useState(false);
+  // Prepaid AI-credit balance, shown on the top-level nav for lawyers.
+  const [aiBalance, setAiBalance] = useState<number | null>(null);
   // Bumped by a realtime notification event; NotificationBell refetches on it.
   const [notifTick, setNotifTick] = useState(0);
 
@@ -116,6 +119,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [router, reloadMatters, reloadRetainers, reloadConsultations]);
 
   useEffect(() => setOpen(false), [pathname]);
+
+  // Pull the AI-credit balance once we know the user is a lawyer, and refresh
+  // it whenever they land on the credits page (a purchase may have posted).
+  useEffect(() => {
+    if (me?.role !== 'lawyer') return;
+    aiCredits
+      .account()
+      .then((a) => setAiBalance(a.balance))
+      .catch(() => {});
+  }, [me?.role, pathname]);
 
   // One SSE connection for the whole shell. A booking made by a client lands
   // here (its matter room is brand new, so the channel feed can't carry it) —
@@ -204,6 +217,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {navItem('/bookings', 'Bookings', <Calendar size={16} />, pendingBookings)}
         {isLawyer && navItem('/billables', 'Billables', <Clock size={16} />)}
         {navItem('/transactions', 'Transactions', <Wallet size={16} />)}
+        {isLawyer && (
+          <Link
+            href="/ai-workflows/credits"
+            className={`side-link ${pathname === '/ai-workflows/credits' ? 'side-link-active' : ''}`}
+          >
+            <span className="opacity-80"><Coins size={16} /></span>
+            <span className="flex-1">AI Credits</span>
+            {aiBalance !== null && (
+              <span className="rounded-full bg-brand-light px-1.5 text-[10px] font-bold text-brand-darker">
+                {new Intl.NumberFormat('en', { notation: 'compact' }).format(aiBalance)}
+              </span>
+            )}
+          </Link>
+        )}
         {isLawyer && (
           <AIWorkflowsGroup
             pathname={pathname}

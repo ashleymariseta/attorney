@@ -18,6 +18,7 @@ import 'screens/auth/verify_email_screen.dart';
 import 'screens/billables/billables_screen.dart';
 import 'screens/book/book_lawyer_screen.dart';
 import 'screens/bookings/bookings_screen.dart';
+import 'screens/matters/create_matter_screen.dart';
 import 'screens/clients/clients_screen.dart';
 import 'screens/dashboard/dashboard_screen.dart';
 import 'screens/lawyers/lawyer_profile_screen.dart';
@@ -63,6 +64,7 @@ class Routes {
   static const transactions = '/transactions';
   static const settings = '/settings';
   static const matters = '/matters';
+  static const createMatter = '/create-matter';
   static String matter(int id) => '/matters/$id';
   static String book(int lawyerId) => '/book/$lawyerId';
 
@@ -191,6 +193,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: Routes.transactions, builder: (_, __) => const TransactionsScreen()),
           GoRoute(path: Routes.settings, builder: (_, __) => const SettingsScreen()),
           GoRoute(path: Routes.matters, builder: (_, __) => const MattersListScreen()),
+          GoRoute(path: Routes.createMatter, builder: (_, __) => const CreateMatterScreen()),
           GoRoute(
             path: '/matters/:id',
             builder: (_, s) => MatterScreen(matterId: int.parse(s.pathParameters['id']!)),

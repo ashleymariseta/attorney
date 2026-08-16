@@ -508,7 +508,7 @@ class _LawyersScreenState extends ConsumerState<LawyersScreen> {
             empty: 'No jurisdictions yet.',
             children: [
               for (final j in allJuris)
-                _chip(label: j, active: _jurisdictions.contains(j), onTap: () {
+                _chip(label: jurisdictionChipLabel(j), active: _jurisdictions.contains(j), onTap: () {
                   setState(() => _jurisdictions.contains(j) ? _jurisdictions.remove(j) : _jurisdictions.add(j));
                 }),
             ],
@@ -656,7 +656,12 @@ class _LawyerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = lawyer.profile;
-    final juris = (p?.jurisdictions ?? const <String>[]).join(', ');
+    final juris = (p?.jurisdictions ?? const <String>[])
+        .map((j) {
+          final f = flagForJurisdiction(j);
+          return f.isEmpty ? j : f;
+        })
+        .join(' ');
     final ratingLabel = lawyer.avgRating != null
         ? '${lawyer.avgRating!.toStringAsFixed(1)} (${lawyer.reviewCount})'
         : 'No reviews yet';
@@ -935,7 +940,10 @@ class _FirmCard extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      '$lawyerCount lawyer${lawyerCount == 1 ? '' : 's'} · ${juris.isEmpty ? '—' : juris.join(', ')}',
+                      '$lawyerCount lawyer${lawyerCount == 1 ? '' : 's'} · ${juris.isEmpty ? '—' : juris.map((j) {
+                        final f = flagForJurisdiction(j);
+                        return f.isEmpty ? j : f;
+                      }).join(' ')}',
                       style: const TextStyle(fontSize: 11, color: AppColors.muted),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
