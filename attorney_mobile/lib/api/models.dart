@@ -40,9 +40,11 @@ class User {
   bool get isLawyer => role == 'lawyer';
   bool get isClient => role.startsWith('client');
 
-  /// A lawyer who hasn't yet cleared the credential-verification gate.
+  /// A lawyer who hasn't yet cleared the credential-verification gate. A
+  /// missing lawyer_profile (null) counts as "not submitted" — same as the
+  /// web gate — so an account with no profile row can't slip past KYC.
   bool get lawyerNeedsVerification =>
-      isLawyer && lawyerCredentialsSubmitted == false;
+      isLawyer && lawyerCredentialsSubmitted != true;
 
   factory User.fromJson(Map<String, dynamic> j) {
     final lp = j['lawyer_profile'];
