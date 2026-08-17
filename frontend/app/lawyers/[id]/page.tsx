@@ -259,8 +259,11 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
                   <Detail icon={Languages} label="Languages">
                     {(profile.languages ?? []).length ? profile.languages.join(', ') : <span className="text-muted">—</span>}
                   </Detail>
-                  <Detail icon={GraduationCap} label="Bar number">
-                    {profile.bar_number || <span className="text-muted">—</span>}
+                  <Detail icon={GraduationCap} label="Bar / practising cert. no.">
+                    {[profile.bar_number, profile.practising_certificate_number]
+                      .filter(Boolean)
+                      .filter((v, i, a) => a.indexOf(v) === i)
+                      .join(' / ') || <span className="text-muted">—</span>}
                   </Detail>
                 </div>
               </section>

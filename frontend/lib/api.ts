@@ -183,6 +183,7 @@ export interface Matter {
 }
 export interface LawyerProfile {
   bar_number: string;
+  practising_certificate_number?: string;
   country: string;
   jurisdictions: string[];
   practice_areas: string[];

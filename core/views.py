@@ -326,6 +326,14 @@ class LawyerViewSet(viewsets.ReadOnlyModelViewSet):
             return User.objects.none()
         return (
             User.objects.filter(role='lawyer')
+            # Only surface lawyers who have cleared the verification gate: a
+            # submitted practising certificate (number + uploaded file). This
+            # mirrors LawyerProfileSerializer.credentials_submitted, so a
+            # brand-new / incomplete account never leaks onto the public
+            # directory. The positive join also drops any lawyer with no
+            # profile row at all.
+            .filter(lawyer_profile__practising_certificate_number__gt='')
+            .filter(lawyer_profile__practising_certificate_file__gt='')
             .select_related('lawyer_profile')
             .annotate(avg_rating=Avg('reviews_received__rating'), review_count=Count('reviews_received'))
             .order_by('first_name', 'last_name')

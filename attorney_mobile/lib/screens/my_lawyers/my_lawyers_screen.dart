@@ -148,6 +148,9 @@ class _RetainerCard extends StatelessWidget {
               CircleAvatar(
                 radius: 24,
                 backgroundColor: AppColors.brandLight,
+                foregroundImage: (lawyer['avatar_url'] as String?)?.isNotEmpty == true
+                    ? NetworkImage(lawyer['avatar_url'] as String)
+                    : null,
                 child: Text(
                   initial.toUpperCase(),
                   style: const TextStyle(

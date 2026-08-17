@@ -140,6 +140,11 @@ class Command(BaseCommand):
             # First two lawyers join firm #1, next two firm #2.
             profile.firm = firms[0] if len(created_lawyers) < 2 else firms[1]
             profile.practising_certificate_number = f'PC-2026-{1000 + len(created_lawyers):04d}'
+            # Placeholder cert file name so demo lawyers clear the directory
+            # verification gate (real lawyers upload one via the app). The file
+            # itself need not exist on disk — only a non-empty name is required.
+            if not profile.practising_certificate_file:
+                profile.practising_certificate_file.name = 'practising_certificates/demo-certificate.pdf'
             profile.practising_certificate_expires = timezone.now().date().replace(year=timezone.now().year + 1)
             profile.save()
             created_lawyers.append(user)

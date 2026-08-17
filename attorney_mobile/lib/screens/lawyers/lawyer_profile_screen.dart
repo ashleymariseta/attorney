@@ -373,9 +373,9 @@ class _LawyerProfileScreenState extends ConsumerState<LawyerProfileScreen> {
                       const SizedBox(height: 12),
                       _Detail(
                         icon: LucideIcons.graduationCap,
-                        label: 'Bar number',
+                        label: 'Bar / practising cert. no.',
                         child: Text(
-                          p.barNumber.isEmpty ? '—' : p.barNumber,
+                          p.barOrCertLabel.isEmpty ? '—' : p.barOrCertLabel,
                           style: const TextStyle(fontSize: 13, color: AppColors.ink),
                         ),
                       ),

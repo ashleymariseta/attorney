@@ -97,6 +97,7 @@ class MiniUser {
 class LawyerProfile {
   LawyerProfile({
     required this.barNumber,
+    required this.practisingCertificateNumber,
     required this.country,
     required this.jurisdictions,
     required this.practiceAreas,
@@ -107,6 +108,7 @@ class LawyerProfile {
     this.consultationPrice,
   });
   final String barNumber;
+  final String practisingCertificateNumber;
   final String country;
   final List<String> jurisdictions;
   final List<String> practiceAreas;
@@ -116,8 +118,19 @@ class LawyerProfile {
   final String? hourlyRate;
   final String? consultationPrice;
 
+  /// Bar/roll number and practising-certificate number combined as one
+  /// identifier ("A / B"), deduped — they're treated as the same credential.
+  String get barOrCertLabel {
+    final seen = <String>{};
+    final parts = [barNumber, practisingCertificateNumber]
+        .where((v) => v.trim().isNotEmpty && seen.add(v.trim()))
+        .toList();
+    return parts.join(' / ');
+  }
+
   factory LawyerProfile.fromJson(Map<String, dynamic> j) => LawyerProfile(
         barNumber: j['bar_number'] as String? ?? '',
+        practisingCertificateNumber: j['practising_certificate_number'] as String? ?? '',
         country: j['country'] as String? ?? '',
         jurisdictions: List<String>.from(j['jurisdictions'] ?? const []),
         practiceAreas: List<String>.from(j['practice_areas'] ?? const []),
