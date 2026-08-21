@@ -70,17 +70,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<!-- Google Sign-In: reversed iOS OAuth client ID (callback URL scheme). -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.987691681405-3qievjgeloq3pniub32k4j7hfprbhgnl</string>
-			</array>
-		</dict>
-	</array>
 </dict>
 </plist>

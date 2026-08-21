@@ -290,19 +290,6 @@ FRONTEND_URL = env.str(
     if _invite_origin.netloc else 'http://localhost:3000',
 )
 
-# Google Sign-In — the OAuth client IDs we accept as the audience of a Google
-# ID token (web, Android, iOS). Empty entries are filtered out.
-GOOGLE_OAUTH_CLIENT_IDS = [
-    cid for cid in (
-        env.str('GOOGLE_OAUTH_WEB_CLIENT_ID', ''),
-        env.str('GOOGLE_OAUTH_ANDROID_CLIENT_ID', ''),
-        env.str('GOOGLE_OAUTH_IOS_CLIENT_ID', ''),
-    ) if cid
-]
-# Optional: restrict Google sign-in to a single Workspace domain (e.g.
-# "legalonline.co.zw"). Blank allows any Google account.
-GOOGLE_ALLOWED_EMAIL_DOMAIN = env.str('GOOGLE_ALLOWED_EMAIL_DOMAIN', '').strip().lower()
-
 # WhatsApp delivery for 2FA codes. When unset, codes are logged to the console
 # only — wire a real provider (Twilio, Meta Cloud API, etc.) in production.
 WHATSAPP_API_URL = env.str('WHATSAPP_API_URL', '')
