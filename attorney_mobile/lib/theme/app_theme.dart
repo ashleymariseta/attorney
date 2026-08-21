@@ -33,7 +33,10 @@ ThemeData buildAppTheme() {
     colorScheme: colorScheme,
     useMaterial3: true,
     scaffoldBackgroundColor: AppColors.canvas,
-    fontFamily: 'Roboto',
+    // No explicit fontFamily: 'Roboto' isn't a system font on iOS and wasn't
+    // bundled, so CoreText's fallback rendered every weight bold. Letting each
+    // platform use its native default (San Francisco on iOS, Roboto on
+    // Android) renders the real weights correctly.
   );
 
   return base.copyWith(
