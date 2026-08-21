@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -366,6 +367,9 @@ class _BookLawyerScreenState extends ConsumerState<BookLawyerScreen> {
               CircleAvatar(
                 radius: 22,
                 backgroundColor: AppColors.brandLight,
+                foregroundImage: (lawyer.avatarUrl?.isNotEmpty ?? false)
+                    ? CachedNetworkImageProvider(lawyer.avatarUrl!, maxWidth: 150)
+                    : null,
                 child: Text(
                   initials.toUpperCase(),
                   style: const TextStyle(
