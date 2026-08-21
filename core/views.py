@@ -974,7 +974,61 @@ class RetainerViewSet(viewsets.ModelViewSet):
         return qs.filter(Q(client=user) | Q(lawyer=user)).distinct()
 
     def perform_create(self, serializer):
-        serializer.save(client=self.request.user)
+        client = self.request.user
+        lawyer = serializer.validated_data.get('lawyer')
+        if lawyer is None or getattr(lawyer, 'role', None) != 'lawyer':
+            raise ValidationError('You can only retain a lawyer.')
+        profile = getattr(lawyer, 'lawyer_profile', None)
+        fee = getattr(profile, 'monthly_retainer_fee', None) if profile else None
+        if fee is None:
+            raise ValidationError(
+                "This lawyer hasn't published a monthly retainer fee yet."
+            )
+
+        lawyer_label = lawyer.get_full_name() or lawyer.email
+        client_label = client.get_full_name() or client.email
+
+        # A dedicated matter room the monthly invoices post to, so the client
+        # can upload proof of payment and the lawyer can verify it there.
+        title = f'Retainer — {lawyer_label}'
+        matter = Matter.objects.create(
+            title=title,
+            description=f'Monthly retainer engagement with {lawyer_label}.',
+            client=client,
+            billing_model=BillingModel.RETAINER,
+        )
+        matter.lawyers.add(lawyer)
+        channel = Channel.objects.create(channel_type='matter', matter=matter, name=title)
+        channel.members.add(client, lawyer)
+
+        # First charge only at month-end — anchor the cursor to the 1st of next
+        # month; the daily billing job raises the invoice when now >= cursor.
+        now = timezone.now()
+        year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+        next_invoice_at = now.replace(
+            year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0,
+        )
+
+        serializer.save(
+            client=client,
+            monthly_fee=fee,
+            cycle=RetainerCycle.MONTHLY,
+            plan_name='Monthly retainer',
+            status=RetainerStatus.ACTIVE,
+            matter=matter,
+            next_invoice_at=next_invoice_at,
+        )
+
+        notify(
+            recipient=lawyer,
+            kind=NotificationKind.GENERIC,
+            title=f'{client_label} put you on retainer',
+            body=(
+                f'{client_label} added you to their legal team at '
+                f'${fee}/month. Monthly invoices will be raised automatically.'
+            ),
+            link=f'/matters/{matter.id}',
+        )
 
 
 class DocumentViewSet(viewsets.ModelViewSet):

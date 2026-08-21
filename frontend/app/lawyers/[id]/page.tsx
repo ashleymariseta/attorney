@@ -55,6 +55,7 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
   const [authMode, setAuthMode] = useState<'pending' | 'authed' | 'public'>('pending');
   const [meRole, setMeRole] = useState<string | null>(null);
   const [addingTeam, setAddingTeam] = useState(false);
+  const [confirmRetainer, setConfirmRetainer] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -82,6 +83,7 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
     try {
       await retainersApi.add(lawyer.id);
       setLawyer({ ...lawyer, on_retainer: true });
+      setConfirmRetainer(false);
       toast.success(`${lawyer.full_name} added to your legal team.`, { major: true });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not add to team.');
@@ -325,11 +327,11 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
                   </div>
                 ) : (
                   <button
-                    onClick={addToTeam}
+                    onClick={() => setConfirmRetainer(true)}
                     disabled={addingTeam}
                     className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition hover:border-brand hover:text-brand disabled:opacity-50"
                   >
-                    <UserPlus size={14} /> {addingTeam ? 'Adding…' : 'Add to my legal team'}
+                    <UserPlus size={14} /> Add to my legal team
                   </button>
                 )
               )}
@@ -365,7 +367,92 @@ export default function PublicLawyerProfile({ params }: { params: { id: string }
       </div>
 
       {open && <BookModal lawyer={lawyer} onClose={() => setOpen(false)} />}
+      {confirmRetainer && (
+        <RetainerConfirmModal
+          lawyer={lawyer}
+          busy={addingTeam}
+          onConfirm={addToTeam}
+          onClose={() => setConfirmRetainer(false)}
+        />
+      )}
     </Shell>
+  );
+}
+
+function RetainerConfirmModal({
+  lawyer,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  lawyer: Lawyer;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const fee = lawyer.monthly_retainer_fee;
+  const hasFee = fee != null && fee !== '';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-brand-darker/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="bg-gradient-to-br from-brand-dark to-brand px-6 py-5 text-white">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/80">
+            <UserPlus size={14} /> Add to your legal team
+          </div>
+          <h2 className="mt-1 text-lg font-bold">{lawyer.full_name}</h2>
+        </div>
+        <div className="space-y-4 p-6">
+          {hasFee ? (
+            <>
+              <div className="rounded-xl border border-line bg-canvas px-4 py-4 text-center">
+                <p className="text-xs uppercase tracking-wide text-muted">Monthly retainer</p>
+                <p className="mt-1 text-3xl font-extrabold text-brand-dark">
+                  ${fee}
+                  <span className="text-base font-semibold text-muted">/month</span>
+                </p>
+              </div>
+              <p className="text-sm text-ink/80">
+                Keeping {lawyer.first_name} on retainer means you&rsquo;ll be billed{' '}
+                <span className="font-semibold">${fee} every month</span>. At the end of each
+                month an invoice is raised in your matter room — pay it and upload your proof of
+                payment there. You can open a workspace anytime, no per-consultation fee.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={onClose}
+                  disabled={busy}
+                  className="flex-1 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-canvas disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={onConfirm}
+                  disabled={busy}
+                  className="flex-1 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50"
+                >
+                  {busy ? 'Adding…' : `Agree & add`}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-ink/80">
+                {lawyer.first_name} hasn&rsquo;t published a monthly retainer fee yet, so they
+                can&rsquo;t be added to your team right now. You can still book a one-off
+                consultation.
+              </p>
+              <button
+                onClick={onClose}
+                className="w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-canvas"
+              >
+                Close
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

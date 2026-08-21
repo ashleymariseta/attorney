@@ -153,6 +153,7 @@ export interface User {
     practising_certificate_expires?: string | null;
     practice_areas?: string[];
     jurisdictions?: string[];
+    monthly_retainer_fee?: string | null;
   } | null;
 }
 export interface MiniUser {
@@ -203,6 +204,7 @@ export interface Lawyer {
   profile: LawyerProfile | null;
   on_retainer: boolean;
   hourly_rate: string | null;
+  monthly_retainer_fee: string | null;
   country: string;
   avg_rating: number | null;
   review_count: number;
@@ -292,6 +294,7 @@ export interface LawyerProfileEdit {
   hourly_rate_min: string | null;
   hourly_rate_max: string | null;
   consultation_price: string | null;
+  monthly_retainer_fee: string | null;
   bio: string;
   firm: number | null;
   firm_detail: { id: number; name: string; slug: string; website: string; verified: boolean } | null;

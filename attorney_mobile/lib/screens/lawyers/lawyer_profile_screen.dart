@@ -45,6 +45,107 @@ class _LawyerProfileScreenState extends ConsumerState<LawyerProfileScreen> {
     return _ProfileData(lawyer: lawyer, reviews: reviews);
   }
 
+  Future<void> _confirmAddToTeam(Lawyer lawyer) async {
+    final fee = lawyer.monthlyRetainerFee;
+    final hasFee = fee != null && fee.isNotEmpty;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(LucideIcons.userPlus, size: 18, color: AppColors.brandDark),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Add ${lawyer.firstName} to your team',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (hasFee) ...[
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.canvas,
+                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    children: [
+                      const Text('MONTHLY RETAINER',
+                          style: TextStyle(fontSize: 10, letterSpacing: 0.6, fontWeight: FontWeight.w700, color: AppColors.muted)),
+                      const SizedBox(height: 4),
+                      Text('\$$fee',
+                          style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
+                      const Text('per month', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Keeping ${lawyer.firstName} on retainer means you’ll be billed \$$fee every '
+                  'month. At month-end an invoice appears in your matter room — pay it and upload '
+                  'your proof of payment there. Open a workspace anytime, no per-consultation fee.',
+                  style: const TextStyle(fontSize: 13, color: AppColors.ink, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(sheetCtx).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(sheetCtx).pop(true),
+                        child: const Text('Agree & add'),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                Text(
+                  '${lawyer.firstName} hasn’t published a monthly retainer fee yet, so they '
+                  'can’t be added to your team right now. You can still book a one-off '
+                  'consultation.',
+                  style: const TextStyle(fontSize: 13, color: AppColors.ink, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => Navigator.of(sheetCtx).pop(false),
+                  child: const Text('Close'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok == true) await _addToTeam(lawyer);
+  }
+
   Future<void> _addToTeam(Lawyer lawyer) async {
     setState(() => _addingTeam = true);
     try {
@@ -306,7 +407,7 @@ class _LawyerProfileScreenState extends ConsumerState<LawyerProfileScreen> {
                         )
                       else
                         OutlinedButton.icon(
-                          onPressed: _addingTeam ? null : () => _addToTeam(lawyer),
+                          onPressed: _addingTeam ? null : () => _confirmAddToTeam(lawyer),
                           icon: const Icon(LucideIcons.userPlus, size: 16),
                           label: Text(_addingTeam ? 'Adding…' : 'Add to my legal team'),
                         ),

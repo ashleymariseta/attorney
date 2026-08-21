@@ -108,6 +108,7 @@ class LawyerProfile {
     required this.bio,
     this.hourlyRate,
     this.consultationPrice,
+    this.monthlyRetainerFee,
   });
   final String barNumber;
   final String practisingCertificateNumber;
@@ -119,6 +120,7 @@ class LawyerProfile {
   final String bio;
   final String? hourlyRate;
   final String? consultationPrice;
+  final String? monthlyRetainerFee;
 
   /// Bar/roll number and practising-certificate number combined as one
   /// identifier ("A / B"), deduped — they're treated as the same credential.
@@ -141,6 +143,7 @@ class LawyerProfile {
         bio: j['bio'] as String? ?? '',
         hourlyRate: j['hourly_rate'] as String?,
         consultationPrice: j['consultation_price'] as String?,
+        monthlyRetainerFee: j['monthly_retainer_fee'] as String?,
       );
 }
 
@@ -157,6 +160,7 @@ class Lawyer {
     this.email,
     this.profile,
     this.hourlyRate,
+    this.monthlyRetainerFee,
     this.avgRating,
     this.avatarUrl,
   });
@@ -169,6 +173,7 @@ class Lawyer {
   final LawyerProfile? profile;
   final bool onRetainer;
   final String? hourlyRate;
+  final String? monthlyRetainerFee;
   final String country;
   final double? avgRating;
   final int reviewCount;
@@ -184,6 +189,7 @@ class Lawyer {
         onRetainer: j['on_retainer'] as bool? ?? false,
         country: j['country'] as String? ?? '',
         hourlyRate: j['hourly_rate'] as String?,
+        monthlyRetainerFee: j['monthly_retainer_fee'] as String?,
         avgRating: (j['avg_rating'] as num?)?.toDouble(),
         reviewCount: (j['review_count'] as num?)?.toInt() ?? 0,
         avatarUrl: j['avatar_url'] as String?,

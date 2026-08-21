@@ -25,6 +25,7 @@ class _LawyerVerificationScreenState
     extends ConsumerState<LawyerVerificationScreen> {
   final _certNumber = TextEditingController();
   final _barNumber = TextEditingController();
+  final _retainerFee = TextEditingController();
   DateTime? _issued;
   DateTime? _expires;
   String? _fileName;
@@ -36,6 +37,7 @@ class _LawyerVerificationScreenState
   void dispose() {
     _certNumber.dispose();
     _barNumber.dispose();
+    _retainerFee.dispose();
     super.dispose();
   }
 
@@ -91,6 +93,8 @@ class _LawyerVerificationScreenState
         'practising_certificate_issued': fmt.format(_issued!),
         if (_expires != null)
           'practising_certificate_expires': fmt.format(_expires!),
+        if (_retainerFee.text.trim().isNotEmpty)
+          'monthly_retainer_fee': _retainerFee.text.trim(),
         'practising_certificate_file':
             await MultipartFile.fromFile(_filePath!, filename: _fileName),
       });
@@ -185,6 +189,17 @@ class _LawyerVerificationScreenState
                     value:
                         _expires == null ? 'Choose date' : df.format(_expires!),
                     onTap: () => _pickDate(issued: false),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _retainerFee,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Monthly retainer fee (USD)',
+                      prefixText: '\$ ',
+                      helperText: 'What a client pays each month to keep you on retainer.',
+                      helperMaxLines: 2,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   OutlinedButton.icon(

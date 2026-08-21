@@ -732,6 +732,7 @@ class _LawyerRatesTabState extends ConsumerState<_LawyerRatesTab> {
   static const _step = 5;
   String? _hourly;
   late TextEditingController _consult;
+  late TextEditingController _retainer;
   bool _busy = false;
   String? _error;
 
@@ -742,11 +743,15 @@ class _LawyerRatesTabState extends ConsumerState<_LawyerRatesTab> {
     _consult = TextEditingController(
       text: widget.form['consultation_price'] as String? ?? '',
     );
+    _retainer = TextEditingController(
+      text: widget.form['monthly_retainer_fee'] as String? ?? '',
+    );
   }
 
   @override
   void dispose() {
     _consult.dispose();
+    _retainer.dispose();
     super.dispose();
   }
 
@@ -788,6 +793,7 @@ class _LawyerRatesTabState extends ConsumerState<_LawyerRatesTab> {
       final payload = <String, dynamic>{
         'hourly_rate': _hourly,
         'consultation_price': _consult.text.trim().isEmpty ? null : _consult.text.trim(),
+        'monthly_retainer_fee': _retainer.text.trim().isEmpty ? null : _retainer.text.trim(),
       };
       await ref
           .read(endpointsProvider)
@@ -887,6 +893,16 @@ class _LawyerRatesTabState extends ConsumerState<_LawyerRatesTab> {
               keyboardType: TextInputType.number,
             ),
           ),
+          const SizedBox(height: 12),
+          _Field(
+            label: 'Monthly retainer fee (USD)',
+            hint: 'Billed to clients who keep you on retainer, every month.',
+            child: TextField(
+              controller: _retainer,
+              keyboardType: TextInputType.number,
+            ),
+          ),
+          const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(

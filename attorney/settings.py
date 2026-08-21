@@ -231,6 +231,18 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=DEBUG)
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# Periodic jobs (Celery Beat). Runs daily at 06:00 in TIME_ZONE and raises any
+# due monthly-retainer invoices — the cursor on each retainer means only those
+# actually due (month-end passed) are billed, so a daily cadence is safe.
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    'bill-due-retainers-daily': {
+        'task': 'core.tasks.bill_due_retainers',
+        'schedule': crontab(hour=6, minute=0),
+    },
+}
+
 # Security hardening — on by default in production, env-overridable.
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)
 SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=not DEBUG)

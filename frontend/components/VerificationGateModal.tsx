@@ -38,6 +38,7 @@ export default function VerificationGateModal({
   const [expires, setExpires] = useState(me?.lawyer_profile?.practising_certificate_expires ?? '');
   const [areas, setAreas] = useState<string[]>(me?.lawyer_profile?.practice_areas ?? []);
   const [jurisdictions, setJurisdictions] = useState<string[]>(me?.lawyer_profile?.jurisdictions ?? []);
+  const [monthlyFee, setMonthlyFee] = useState(me?.lawyer_profile?.monthly_retainer_fee ?? '');
   const [fileName, setFileName] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -78,8 +79,11 @@ export default function VerificationGateModal({
     try {
       // Practice areas / jurisdictions are JSON fields — send them as a JSON
       // PATCH, separate from the multipart certificate upload below.
-      if (areas.length || jurisdictions.length) {
-        await lawyerProfile.update({ practice_areas: areas, jurisdictions });
+      if (areas.length || jurisdictions.length || String(monthlyFee).trim()) {
+        await lawyerProfile.update({
+          ...(areas.length || jurisdictions.length ? { practice_areas: areas, jurisdictions } : {}),
+          ...(String(monthlyFee).trim() ? { monthly_retainer_fee: String(monthlyFee).trim() } : {}),
+        });
       }
       const form = new FormData();
       form.append('bar_number', barNumber.trim());
@@ -200,6 +204,23 @@ export default function VerificationGateModal({
               options={JURISDICTION_OPTIONS}
               placeholder="Search or add jurisdictions…"
             />
+          </div>
+
+          <div>
+            <label className="label">Monthly retainer fee (USD)</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              className="field w-full"
+              value={monthlyFee ?? ''}
+              onChange={(e) => setMonthlyFee(e.target.value)}
+              placeholder="e.g. 250"
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              What a client pays each month to keep you on retainer. They agree to this before
+              adding you to their team.
+            </p>
           </div>
 
           <div>

@@ -285,6 +285,7 @@ export default function SettingsPage() {
         // Within the bar-association bracket — server clamps to [min, max].
         hourly_rate: form.hourly_rate,
         consultation_price: form.consultation_price,
+        monthly_retainer_fee: form.monthly_retainer_fee,
         country: form.country,
         practice_areas: form.practice_areas,
         jurisdictions: form.jurisdictions,
@@ -562,6 +563,10 @@ export default function SettingsPage() {
             <RateField icon={Briefcase} label="Consultation base (USD)" hint="Charged per consultation booking.">
               <input className="field" type="number" min="0" step="1" value={form.consultation_price ?? ''}
                 onChange={(e) => set('consultation_price', e.target.value)} />
+            </RateField>
+            <RateField icon={CreditCard} label="Monthly retainer fee (USD)" hint="Billed to clients who keep you on retainer, every month.">
+              <input className="field" type="number" min="0" step="1" value={form.monthly_retainer_fee ?? ''}
+                onChange={(e) => set('monthly_retainer_fee', e.target.value)} />
             </RateField>
           </div>
           <div className="rounded-lg border border-brand-light/30 bg-brand-light/10 p-3 text-xs text-brand-dark">

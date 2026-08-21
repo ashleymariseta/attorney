@@ -214,6 +214,10 @@ class LawyerProfile(models.Model):
     # years on every save — lawyers cannot set it manually.
     hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     consultation_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Flat monthly fee a client pays to keep this lawyer on retainer. A client
+    # can only put the lawyer on their team once this is set; it seeds each
+    # Retainer.monthly_fee and drives the month-end billing job.
+    monthly_retainer_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     bio = models.TextField(blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
 
@@ -466,6 +470,17 @@ class Retainer(models.Model):
     monthly_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     included_hours = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=16, choices=RetainerStatus.choices, default=RetainerStatus.ACTIVE)
+    # Dedicated matter room the monthly retainer invoices post to (so the
+    # client can upload proof of payment and the lawyer can verify, like any
+    # other invoice).
+    matter = models.ForeignKey(
+        'core.Matter', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='retainers',
+    )
+    # Billing cursor — when the next monthly invoice is due. Set to the first
+    # of next month on creation (first charge only at month-end), advanced one
+    # month each time the billing job raises an invoice.
+    next_invoice_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

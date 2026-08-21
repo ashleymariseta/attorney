@@ -48,6 +48,7 @@ class LawyerProfileSerializer(serializers.ModelSerializer):
             'years_experience',
             'hourly_rate',
             'consultation_price',
+            'monthly_retainer_fee',
             'bio',
             'verified_at',
             'credentials_submitted',
@@ -154,6 +155,7 @@ class LawyerCardSerializer(serializers.ModelSerializer):
     profile = LawyerProfileSerializer(source='lawyer_profile', read_only=True)
     on_retainer = serializers.SerializerMethodField()
     hourly_rate = serializers.SerializerMethodField()
+    monthly_retainer_fee = serializers.SerializerMethodField()
     country = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
@@ -163,8 +165,8 @@ class LawyerCardSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name', 'is_verified',
-            'profile', 'on_retainer', 'hourly_rate', 'country', 'avg_rating', 'review_count',
-            'avatar_url',
+            'profile', 'on_retainer', 'hourly_rate', 'monthly_retainer_fee', 'country',
+            'avg_rating', 'review_count', 'avatar_url',
         ]
 
     def get_full_name(self, obj):
@@ -184,6 +186,14 @@ class LawyerCardSerializer(serializers.ModelSerializer):
     def get_hourly_rate(self, obj):
         profile = getattr(obj, 'lawyer_profile', None)
         return str(profile.hourly_rate) if profile and profile.hourly_rate is not None else None
+
+    def get_monthly_retainer_fee(self, obj):
+        profile = getattr(obj, 'lawyer_profile', None)
+        return (
+            str(profile.monthly_retainer_fee)
+            if profile and profile.monthly_retainer_fee is not None
+            else None
+        )
 
     def get_country(self, obj):
         profile = getattr(obj, 'lawyer_profile', None)
@@ -412,7 +422,7 @@ class LawyerProfileEditSerializer(serializers.ModelSerializer):
             'practising_certificate_file', 'practising_certificate_file_url',
             'country', 'jurisdictions', 'practice_areas', 'languages',
             'years_experience', 'hourly_rate', 'hourly_rate_min', 'hourly_rate_max',
-            'consultation_price', 'bio',
+            'consultation_price', 'monthly_retainer_fee', 'bio',
             'firm', 'firm_detail',
         ]
         # years_experience is derived from practising_certificate_issued on save,
@@ -503,9 +513,16 @@ class RetainerSerializer(serializers.ModelSerializer):
             'monthly_fee',
             'included_hours',
             'status',
+            'matter',
+            'next_invoice_at',
             'created_at',
         ]
-        read_only_fields = ['client', 'created_at']
+        # The client only supplies `lawyer`; the fee/plan/cycle and billing
+        # cursor are set server-side from the lawyer's published retainer fee.
+        read_only_fields = [
+            'client', 'created_at', 'plan_name', 'cycle', 'monthly_fee',
+            'included_hours', 'status', 'matter', 'next_invoice_at',
+        ]
 
 
 class DocumentSerializer(serializers.ModelSerializer):
