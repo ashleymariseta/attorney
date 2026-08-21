@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -239,13 +240,30 @@ class _BillablesScreenState extends ConsumerState<BillablesScreen> with SingleTi
   }
 
   Future<void> _viewInvoicePdf(int paymentId) async {
-    final url = ref.read(endpointsProvider).invoicePdfUrl(paymentId);
-    final uri = Uri.parse(url);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open the invoice PDF.')),
+    // Download the PDF authenticated (the raw URL carries no JWT, so an
+    // external browser would 401) then open the saved file.
+    try {
+      final bytes = await ref.read(endpointsProvider).downloadInvoicePdf(paymentId);
+      final file = File(
+        '${Directory.systemTemp.path}/Invoice-INV-${paymentId.toString().padLeft(5, '0')}.pdf',
       );
+      await file.writeAsBytes(bytes, flush: true);
+      final ok = await launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the invoice PDF.')),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the invoice PDF.')),
+        );
+      }
     }
   }
 }

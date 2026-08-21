@@ -199,6 +199,28 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     );
   }
 
+  /// Download the branded invoice PDF (authenticated) and open it in the
+  /// system viewer. Shows a brief progress toast while fetching.
+  Future<void> _viewInvoice(int paymentId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Preparing invoice…'), duration: Duration(seconds: 1)),
+    );
+    try {
+      final bytes = await ref.read(endpointsProvider).downloadInvoicePdf(paymentId);
+      final file = File('${Directory.systemTemp.path}/Invoice-INV-${paymentId.toString().padLeft(5, '0')}.pdf');
+      await file.writeAsBytes(bytes, flush: true);
+      final ok = await launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication);
+      if (!ok) {
+        messenger.showSnackBar(const SnackBar(content: Text('Could not open the invoice PDF.')));
+      }
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      messenger.showSnackBar(const SnackBar(content: Text('Could not open the invoice PDF.')));
+    }
+  }
+
   void _openDetail(_Tx t) {
     showModalBottomSheet<void>(
       context: context,
@@ -207,7 +229,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _TxDetailSheet(t: t, onViewProof: _viewProof),
+      builder: (_) => _TxDetailSheet(
+        t: t,
+        onViewProof: _viewProof,
+        onViewInvoice: t.paymentId != null ? () => _viewInvoice(t.paymentId!) : null,
+      ),
     );
   }
 
@@ -339,6 +365,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       onViewProof: t.proofUrl != null
                           ? () => _viewProof(t.proofUrl!, 'Proof of payment · ${t.label}')
                           : null,
+                      onViewInvoice: t.paymentId != null
+                          ? () => _viewInvoice(t.paymentId!)
+                          : null,
                     ),
               ],
             );
@@ -358,6 +387,7 @@ class _TxTile extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onViewProof,
+    required this.onViewInvoice,
   });
   final _Tx t;
   final bool isAdmin;
@@ -366,6 +396,7 @@ class _TxTile extends StatelessWidget {
   final Future<void> Function(int paymentId) onApprove;
   final VoidCallback onReject;
   final VoidCallback? onViewProof;
+  final VoidCallback? onViewInvoice;
 
   @override
   Widget build(BuildContext context) {
@@ -446,6 +477,8 @@ class _TxTile extends StatelessWidget {
                   _ActionsButton(
                     actions: [
                       _MenuAction(key: 'details', label: 'View details', icon: LucideIcons.eye, onTap: onTap),
+                      if (onViewInvoice != null)
+                        _MenuAction(key: 'invoice', label: 'View invoice', icon: LucideIcons.receipt, onTap: onViewInvoice!),
                       if (onViewProof != null)
                         _MenuAction(key: 'view-pop', label: 'View POP', icon: LucideIcons.fileText, onTap: onViewProof!),
                       if (canApprove)
@@ -580,9 +613,10 @@ class _Stat extends StatelessWidget {
 }
 
 class _TxDetailSheet extends StatelessWidget {
-  const _TxDetailSheet({required this.t, required this.onViewProof});
+  const _TxDetailSheet({required this.t, required this.onViewProof, this.onViewInvoice});
   final _Tx t;
   final void Function(String url, String title) onViewProof;
+  final VoidCallback? onViewInvoice;
   @override
   Widget build(BuildContext context) {
     final created = DateTime.tryParse(t.createdAt);
@@ -648,6 +682,20 @@ class _TxDetailSheet extends StatelessWidget {
                 _NoteBlock(label: 'Notes', body: t.note!),
               if (t.reviewNote != null && t.reviewNote!.isNotEmpty)
                 _NoteBlock(label: 'Reviewer note', body: t.reviewNote!),
+              if (onViewInvoice != null) ...[
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      onViewInvoice!();
+                    },
+                    icon: const Icon(LucideIcons.download, size: 16),
+                    label: const Text('View / download invoice PDF'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

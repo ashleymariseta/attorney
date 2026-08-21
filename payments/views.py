@@ -11,17 +11,39 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
+from django.conf import settings as dj_settings
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
+    Image as RLImage,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
+
+# Brand logo used on generated invoice PDFs (backend-owned copy so it works
+# even when the frontend isn't deployed alongside the API).
+BRAND_LOGO_PATH = dj_settings.BASE_DIR / 'core' / 'branding' / 'attorney-logo.png'
+
+
+def _brand_logo_flowable(max_width_mm=46):
+    """Return a ReportLab Image of the Attorney logo sized to `max_width_mm`
+    (aspect preserved), or None if the asset is missing."""
+    try:
+        if not BRAND_LOGO_PATH.exists():
+            return None
+        iw, ih = ImageReader(str(BRAND_LOGO_PATH)).getSize()
+        w = max_width_mm * mm
+        h = w * (ih / iw)
+        return RLImage(str(BRAND_LOGO_PATH), width=w, height=h)
+    except Exception:
+        return None
 
 from core.models import (
     Consultation,
@@ -398,20 +420,26 @@ class PaymentViewSet(viewsets.ModelViewSet):
         status_bg = '#ecfdf5' if is_paid else ('#fef2f2' if is_rejected else '#fffbeb')
 
         elements = []
+        styles.add(ParagraphStyle(name='ATInvNo', fontName='Helvetica-Bold', fontSize=15, textColor=brand_dark, leading=17, alignment=2))
+        styles.add(ParagraphStyle(name='ATRightSmall', fontName='Helvetica', fontSize=8, textColor=muted, leading=11, alignment=2))
+        logo = _brand_logo_flowable()
+        brandmark = logo if logo is not None else Paragraph('ATTORNEY', styles['ATBrand'])
         header = Table(
             [
-                [Paragraph('ATTORNEY', styles['ATBrand']),
-                 Paragraph(f'<font color="{status_hex}"><b>{status_label}</b></font>', styles['ATBrand'])],
+                [brandmark,
+                 Paragraph('<font color="#64748b">INVOICE</font>', styles['ATRightSmall'])],
                 [Paragraph(firm_name or 'Law &amp; Advisory', styles['ATSmall']),
-                 Paragraph(f'Invoice INV-{payment.id:05d}', styles['ATSmall'])],
+                 Paragraph(f'INV-{payment.id:05d}', styles['ATInvNo'])],
             ],
             colWidths=[None, 70 * mm],
         )
         header.setStyle(TableStyle([
             ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('VALIGN', (0, 0), (0, -1), 'TOP'),
+            ('VALIGN', (1, 0), (1, -1), 'TOP'),
             ('LINEBELOW', (0, 1), (-1, 1), 1, line),
             ('BOTTOMPADDING', (0, 1), (-1, 1), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 0),
         ]))
         elements.append(header)
         elements.append(Spacer(1, 14))

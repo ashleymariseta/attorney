@@ -431,6 +431,21 @@ class Endpoints {
   String invoicePdfUrl(int paymentId) =>
       '${api.dio.options.baseUrl}/api/v1/payments/$paymentId/invoice-pdf/';
 
+  /// Download the branded invoice PDF bytes (authenticated). The raw URL can't
+  /// be opened directly in an external browser because it carries no JWT, so
+  /// callers save these bytes to a temp file and open that instead.
+  Future<List<int>> downloadInvoicePdf(int paymentId) async {
+    try {
+      final res = await _d.get<List<int>>(
+        '/api/v1/payments/$paymentId/invoice-pdf/',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return res.data ?? const [];
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   // ---- Messages (chat) ----
 
   /// Fetch a page of messages newest-first. Returns the paginated envelope
