@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -149,7 +150,7 @@ class _RetainerCard extends StatelessWidget {
                 radius: 24,
                 backgroundColor: AppColors.brandLight,
                 foregroundImage: (lawyer['avatar_url'] as String?)?.isNotEmpty == true
-                    ? NetworkImage(lawyer['avatar_url'] as String)
+                    ? CachedNetworkImageProvider(lawyer['avatar_url'] as String, maxWidth: 150)
                     : null,
                 child: Text(
                   initial.toUpperCase(),

@@ -111,6 +111,34 @@ class RegisterAPIView(mixins.CreateModelMixin, viewsets.GenericViewSet):
         send_email_verification(user)
 
 
+def _downscale_avatar(uploaded, max_side=512):
+    """Resize an uploaded avatar to fit within ``max_side`` px and re-encode as
+    JPEG, so we serve a small file for a tiny circle instead of a multi-MB
+    phone photo (the #1 cause of slow-loading avatars). Honors EXIF rotation.
+    Falls back to the original file if the image can't be processed."""
+    try:
+        import os
+        from io import BytesIO
+        from PIL import Image, ImageOps
+        from django.core.files.base import ContentFile
+
+        img = Image.open(uploaded)
+        img = ImageOps.exif_transpose(img)  # respect phone orientation
+        img = img.convert('RGB')
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format='JPEG', quality=82, optimize=True)
+        buf.seek(0)
+        base = os.path.splitext(os.path.basename(getattr(uploaded, 'name', 'avatar')))[0]
+        return ContentFile(buf.read(), name=f'{base}.jpg')
+    except Exception:
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+        return uploaded
+
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
@@ -139,7 +167,7 @@ class UserViewSet(viewsets.ModelViewSet):
         file = request.FILES.get('avatar')
         if not file:
             raise ValidationError('avatar file is required.')
-        user.avatar = file
+        user.avatar = _downscale_avatar(file)
         user.save(update_fields=['avatar'])
         return Response(UserSerializer(user, context={'request': request}).data)
 

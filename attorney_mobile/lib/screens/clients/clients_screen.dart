@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -701,12 +702,14 @@ class _Avatar extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: url != null && url.isNotEmpty
-          ? Image.network(
-              url,
+          ? CachedNetworkImage(
+              imageUrl: url,
               width: size,
               height: size,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _avatarText(),
+              memCacheWidth: (size * 3).round(),
+              placeholder: (_, __) => _avatarText(),
+              errorWidget: (_, __, ___) => _avatarText(),
             )
           : _avatarText(),
     );

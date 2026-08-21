@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -741,7 +742,7 @@ class _LawyerCardBody extends StatelessWidget {
                     backgroundColor: AppColors.brandLight,
                     foregroundImage: (lawyer.avatarUrl != null &&
                             lawyer.avatarUrl!.isNotEmpty)
-                        ? NetworkImage(lawyer.avatarUrl!)
+                        ? CachedNetworkImageProvider(lawyer.avatarUrl!, maxWidth: 150)
                         : null,
                     child: Text(
                       initials.toUpperCase(),
