@@ -58,7 +58,9 @@ export default function NotificationBell({ refreshTick = 0 }: { refreshTick?: nu
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  const unread = items.filter((n) => !n.read_at).length;
+  // Only show unread (not-yet-viewed) notifications — once read they drop off.
+  const visible = items.filter((n) => !n.read_at);
+  const unread = visible.length;
 
   async function markAllRead() {
     setLoading(true);
@@ -112,13 +114,13 @@ export default function NotificationBell({ refreshTick = 0 }: { refreshTick?: nu
             )}
           </div>
           <div className="max-h-96 overflow-y-auto">
-            {items.length === 0 ? (
+            {visible.length === 0 ? (
               <div className="flex flex-col items-center gap-1 px-4 py-8 text-center">
                 <Inbox size={20} className="text-muted/60" />
-                <p className="text-xs text-muted">No notifications yet</p>
+                <p className="text-xs text-muted">You&rsquo;re all caught up</p>
               </div>
             ) : (
-              items.slice(0, 20).map((n) => {
+              visible.slice(0, 20).map((n) => {
                 const body = (
                   <div className={`group flex items-start gap-2 px-3 py-2.5 transition hover:bg-canvas ${!n.read_at ? 'bg-brand-light/5' : ''}`}>
                     {!n.read_at ? (

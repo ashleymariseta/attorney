@@ -750,6 +750,9 @@ class _NotificationsSheet extends StatelessWidget {
   final List<Notif> items;
   @override
   Widget build(BuildContext context) {
+    // Only show unread (not-yet-viewed) notifications — once seen, they drop
+    // off the list on the next open.
+    final unread = items.where((n) => n.readAt == null).toList();
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -761,25 +764,20 @@ class _NotificationsSheet extends StatelessWidget {
               padding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
               child: Text('Notifications', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
-            if (items.isEmpty)
-              const EmptyState(icon: LucideIcons.inbox, title: 'No notifications yet')
+            if (unread.isEmpty)
+              const EmptyState(icon: LucideIcons.inbox, title: "You're all caught up")
             else
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: items.length,
+                  itemCount: unread.length,
                   itemBuilder: (_, i) {
-                    final n = items[i];
+                    final n = unread[i];
                     return ListTile(
-                      leading: n.readAt == null
-                          ? const Icon(LucideIcons.dot, size: 24, color: AppColors.brand)
-                          : const Icon(LucideIcons.checkCircle2, size: 14, color: AppColors.muted),
+                      leading: const Icon(LucideIcons.dot, size: 24, color: AppColors.brand),
                       title: Text(
                         n.title,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: n.readAt == null ? FontWeight.w700 : FontWeight.w500,
-                        ),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                       ),
                       subtitle: n.body.isEmpty
                           ? null
