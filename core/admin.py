@@ -15,6 +15,7 @@ from .models import (
     Document,
     Review,
     TimeEntry,
+    DeviceToken,
 )
 
 
@@ -122,3 +123,10 @@ class TimeEntryAdmin(admin.ModelAdmin):
     list_display = ('matter', 'lawyer', 'minutes', 'amount', 'is_billable', 'started_at', 'ended_at')
     list_filter = ('is_billable',)
     search_fields = ('matter__title', 'lawyer__email')
+
+
+@admin.register(DeviceToken)
+class DeviceTokenAdmin(admin.ModelAdmin):
+    list_display = ('user', 'platform', 'is_active', 'last_seen_at', 'created_at')
+    list_filter = ('platform', 'is_active')
+    search_fields = ('user__email', 'token')

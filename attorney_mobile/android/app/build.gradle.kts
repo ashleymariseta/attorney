@@ -7,6 +7,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Apply the Firebase/Google-services plugin ONLY when the config file exists,
+// so the app still builds for anyone without google-services.json (push is
+// simply disabled). Drop android/app/google-services.json in to enable FCM.
+if (rootProject.file("app/google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // Release signing config from android/key.properties (gitignored — never
 // committed). Falls back to debug keys when absent so `flutter run --release`
 // still works for devs without the keystore.

@@ -290,6 +290,13 @@ FRONTEND_URL = env.str(
     if _invite_origin.netloc else 'http://localhost:3000',
 )
 
+# Firebase Cloud Messaging (push notifications). Provide ONE of these to enable
+# push; when both are blank, push is disabled and the app runs normally.
+#   FCM_CREDENTIALS_FILE — path to the service-account JSON on the host, or
+#   FCM_CREDENTIALS_JSON — the service-account JSON inline (single env var).
+FCM_CREDENTIALS_FILE = env.str('FCM_CREDENTIALS_FILE', '')
+FCM_CREDENTIALS_JSON = env.str('FCM_CREDENTIALS_JSON', '')
+
 # WhatsApp delivery for 2FA codes. When unset, codes are logged to the console
 # only — wire a real provider (Twilio, Meta Cloud API, etc.) in production.
 WHATSAPP_API_URL = env.str('WHATSAPP_API_URL', '')

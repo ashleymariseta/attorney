@@ -1693,6 +1693,39 @@ class TwoFactorVerifyView(APIView):
         return Response({'access': str(refresh.access_token), 'refresh': str(refresh)})
 
 
+class DeviceTokenView(APIView):
+    """Register / unregister an FCM device token for push notifications.
+
+    POST {token, platform} — upsert the token against the current user.
+    DELETE {token} — deactivate it (called on logout / sign-out).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .models import DeviceToken, DevicePlatform
+
+        token = (request.data.get('token') or '').strip()
+        if not token:
+            raise ValidationError('token is required.')
+        platform = (request.data.get('platform') or 'android').strip().lower()
+        if platform not in DevicePlatform.values:
+            platform = DevicePlatform.ANDROID
+        DeviceToken.objects.update_or_create(
+            token=token,
+            defaults={'user': request.user, 'platform': platform, 'is_active': True},
+        )
+        return Response({'status': 'registered'})
+
+    def delete(self, request):
+        from .models import DeviceToken
+
+        token = (request.data.get('token') or '').strip()
+        if token:
+            DeviceToken.objects.filter(token=token).update(is_active=False)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TwoFactorSetupView(APIView):
     """Begin enabling 2FA — sends a code to the chosen method to confirm reach."""
 

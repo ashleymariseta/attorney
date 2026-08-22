@@ -667,3 +667,27 @@ class TimeEntry(models.Model):
 
     def __str__(self):
         return f'TimeEntry({self.matter.title} {self.minutes}m)'
+
+
+class DevicePlatform(models.TextChoices):
+    IOS = 'ios', 'iOS'
+    ANDROID = 'android', 'Android'
+    WEB = 'web', 'Web'
+
+
+class DeviceToken(models.Model):
+    """An FCM registration token for one of a user's devices. Push
+    notifications are fanned out to every active token a user owns."""
+
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='device_tokens')
+    token = models.CharField(max_length=512, unique=True)
+    platform = models.CharField(max_length=16, choices=DevicePlatform.choices, default=DevicePlatform.ANDROID)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-last_seen_at']
+
+    def __str__(self):
+        return f'DeviceToken({self.user_id}, {self.platform})'

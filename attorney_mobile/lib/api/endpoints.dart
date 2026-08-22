@@ -227,6 +227,24 @@ class Endpoints {
 
   Future<User> me() => _get('/api/v1/users/me/', (j) => User.fromJson(j as Map<String, dynamic>));
 
+  /// Register this device's FCM token so the backend can push to it.
+  Future<void> registerDevice(String token, String platform) async {
+    try {
+      await _d.post('/api/v1/devices/', data: {'token': token, 'platform': platform});
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// Deactivate an FCM token (called on logout / sign-out). Best-effort.
+  Future<void> unregisterDevice(String token) async {
+    try {
+      await _d.delete('/api/v1/devices/', data: {'token': token});
+    } catch (_) {
+      // ignore — logging out shouldn't fail on this.
+    }
+  }
+
   /// Send the password-reset email.
   Future<void> requestPasswordReset(String email) async {
     await _post('/api/v1/auth/password-reset/', (_) => null, data: {'email': email});

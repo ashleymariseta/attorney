@@ -43,6 +43,14 @@ def notify(
         recipient.id,
         {'type': 'notification', 'kind': str(kind), 'id': notif.id, 'title': title},
     )
+    # Best-effort FCM push to the recipient's devices. No-ops if FCM isn't
+    # configured and never raises into the caller.
+    try:
+        from .push import send_push_to_user
+
+        send_push_to_user(recipient, title, body=body, link=link, data={'kind': str(kind)})
+    except Exception:
+        pass
     if send_email and recipient.email and '@invite.attorney.local' not in recipient.email:
         paras = paragraphs_from_body(body)
         if link:

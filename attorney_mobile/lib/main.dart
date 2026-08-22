@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'router.dart';
 import 'theme/app_theme.dart';
+import 'widgets/push_registrar.dart';
 import 'widgets/user_events_listener.dart';
 
 /// App-wide messenger so the account SSE listener can toast from above the
@@ -10,6 +11,7 @@ import 'widgets/user_events_listener.dart';
 final rootMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: AttorneyApp()));
 }
 
@@ -27,15 +29,18 @@ class AttorneyApp extends ConsumerWidget {
       scaffoldMessengerKey: rootMessengerKey,
       // Dismiss the on-screen keyboard whenever the user taps outside a
       // focused text field — the most common mobile UX oversight.
-      builder: (context, child) => UserEventsListener(
+      builder: (context, child) => PushRegistrar(
         messengerKey: rootMessengerKey,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: () {
-            final scope = FocusManager.instance.primaryFocus;
-            if (scope != null && scope.hasFocus) scope.unfocus();
-          },
-          child: child ?? const SizedBox.shrink(),
+        child: UserEventsListener(
+          messengerKey: rootMessengerKey,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              final scope = FocusManager.instance.primaryFocus;
+              if (scope != null && scope.hasFocus) scope.unfocus();
+            },
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
       ),
     );
