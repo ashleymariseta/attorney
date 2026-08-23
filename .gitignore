@@ -30,3 +30,6 @@ node_modules/
 # Large local RAG data (do not commit)
 attorney/rag/chroma_db/
 attorney/rag/data/
+
+# FCM service-account key (secret — never commit)
+fcm-service-account.json
