@@ -7,6 +7,8 @@ import { BookText, BrainCircuit, Calendar, ChevronDown, ChevronRight, Clock, Coi
 import BrandLoader from '@/components/BrandLoader';
 import CreateMatterModal from '@/components/CreateMatterModal';
 import VerificationGateModal from '@/components/VerificationGateModal';
+import SubscriptionGate from '@/components/SubscriptionGate';
+import UpdateBanner from '@/components/UpdateBanner';
 import NotificationBell from '@/components/NotificationBell';
 import { useUserEvents, type UserEvent } from '@/lib/userEvents';
 import { emailVerify, ApiError } from '@/lib/api';
@@ -357,6 +359,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <NotificationBell refreshTick={notifTick} />
             </div>
           </header>
+          <UpdateBanner />
           <EmailVerifyBanner me={me} />
           <main className="min-h-0 flex-1 overflow-y-auto pb-2 md:pb-0">{children}</main>
           <MobileNavStrip
@@ -374,6 +377,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         />
       )}
       <VerificationGateModal me={me} reloadMe={reloadMe} />
+      <SubscriptionGate me={me} reloadMe={reloadMe} />
     </Ctx.Provider>
   );
 }

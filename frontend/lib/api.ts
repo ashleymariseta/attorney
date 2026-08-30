@@ -155,6 +155,23 @@ export interface User {
     jurisdictions?: string[];
     monthly_retainer_fee?: string | null;
   } | null;
+  subscription?: SubscriptionState;
+}
+export interface SubscriptionState {
+  enforced: boolean;
+  state: 'active' | 'required' | 'pending' | 'rejected';
+  amount?: string;
+  currency?: string;
+  period?: string;
+  review_note?: string;
+  proof_url?: string | null;
+}
+export interface AppConfig {
+  web_version: number;
+  mobile_latest_build: number;
+  mobile_min_build: number;
+  ios_store_url: string;
+  android_store_url: string;
 }
 export interface MiniUser {
   id: number;
@@ -454,6 +471,24 @@ export const auth = {
   },
   me() {
     return api<User>('/api/v1/users/me/');
+  },
+};
+
+export const appConfig = {
+  get() {
+    return api<AppConfig>('/api/v1/app-config/', {}, { auth: false });
+  },
+};
+
+export const subscription = {
+  get() {
+    return api<SubscriptionState>('/api/v1/subscription/');
+  },
+  uploadPop(file: File, reference = '') {
+    const form = new FormData();
+    form.append('proof_of_payment', file);
+    if (reference) form.append('reference', reference);
+    return api<SubscriptionState>('/api/v1/subscription/', { method: 'POST', body: form });
   },
 };
 
