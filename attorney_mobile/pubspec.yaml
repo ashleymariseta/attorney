@@ -1,7 +1,7 @@
 name: attorney_mobile
 description: Attorney — Lawyer-on-demand mobile app (mirrors the web product).
 publish_to: 'none'
-version: 1.0.5+7
+version: 1.0.6+8
 
 environment:
   sdk: ^3.12.0
