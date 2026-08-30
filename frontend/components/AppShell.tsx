@@ -523,7 +523,6 @@ function AIWorkflowsGroup({
           {subNavItem('/ai-workflows/templates', 'Templates / Precedents', <FileText size={13} />)}
           {subNavItem('/ai-workflows/documents', 'Documents', <FileSignature size={13} />)}
           {subNavItem('/ai-workflows/contracts', 'Contract Review', <ShieldAlert size={13} />)}
-          {subNavItem('/ai-workflows/credits', 'AI Credits', <Coins size={13} />)}
         </div>
       )}
     </div>

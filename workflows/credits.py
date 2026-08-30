@@ -126,7 +126,9 @@ def debit_credits(account, tokens, *, usage_log=None, note='') -> AICreditTransa
     if tokens <= 0:
         return None
     account = AICreditAccount.objects.select_for_update().get(pk=account.pk)
-    account.balance -= tokens
+    # Never let a balance go negative — a call that overshoots the remaining
+    # credits simply zeroes it out. lifetime_spent still tracks true usage.
+    account.balance = max(0, account.balance - tokens)
     account.lifetime_spent += tokens
     account.save(update_fields=['balance', 'lifetime_spent', 'updated_at'])
     return AICreditTransaction.objects.create(
@@ -187,7 +189,9 @@ def release_charge(user, hold: int, actual_tokens: int, *, usage_log=None, note=
     account = AICreditAccount.objects.select_for_update().get(pk=resolve_account(user=user).pk)
     actual = max(int(actual_tokens or 0), 0)
     delta = int(hold) - actual  # > 0 → refund unused; < 0 → debit overage
-    account.balance += delta
+    # Floor at 0 — an overage that exceeds the remaining balance just zeroes it
+    # out rather than going negative.
+    account.balance = max(0, account.balance + delta)
     account.lifetime_spent += actual
     account.save(update_fields=['balance', 'lifetime_spent', 'updated_at'])
     AICreditTransaction.objects.create(
