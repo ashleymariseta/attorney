@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 import 'widgets/push_registrar.dart';
+import 'widgets/update_checker.dart';
 import 'widgets/user_events_listener.dart';
 
 /// App-wide messenger so the account SSE listener can toast from above the
@@ -31,15 +32,18 @@ class AttorneyApp extends ConsumerWidget {
       // focused text field — the most common mobile UX oversight.
       builder: (context, child) => PushRegistrar(
         messengerKey: rootMessengerKey,
-        child: UserEventsListener(
+        child: UpdateChecker(
           messengerKey: rootMessengerKey,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () {
-              final scope = FocusManager.instance.primaryFocus;
-              if (scope != null && scope.hasFocus) scope.unfocus();
-            },
-            child: child ?? const SizedBox.shrink(),
+          child: UserEventsListener(
+            messengerKey: rootMessengerKey,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                final scope = FocusManager.instance.primaryFocus;
+                if (scope != null && scope.hasFocus) scope.unfocus();
+              },
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       ),

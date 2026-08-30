@@ -8,6 +8,7 @@ import '../../router.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../auth/lawyer_verification_screen.dart';
+import '../auth/subscription_gate_screen.dart';
 
 /// Mobile-first chrome that wraps every auth-gated route. Provides:
 ///  * an AppBar with the matter title fallback + notification bell action
@@ -27,6 +28,9 @@ class AppShell extends ConsumerWidget {
     // Lawyers must submit their practising credentials before using the app —
     // a blocking gate, same as the web VerificationGateModal.
     if (me.lawyerNeedsVerification) return const LawyerVerificationScreen();
+    // Lawyers whose monthly subscription isn't active are blocked until they
+    // pay + get verified (same as the web SubscriptionGate).
+    if (me.subscriptionBlocking) return const SubscriptionGateScreen();
     final isLawyer = me.isLawyer;
     final isClient = me.isClient;
 

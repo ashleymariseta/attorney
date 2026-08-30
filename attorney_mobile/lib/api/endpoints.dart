@@ -227,6 +227,27 @@ class Endpoints {
 
   Future<User> me() => _get('/api/v1/users/me/', (j) => User.fromJson(j as Map<String, dynamic>));
 
+  /// Public app version/config for update prompts.
+  Future<AppConfigInfo> getAppConfig() =>
+      _get('/api/v1/app-config/', (j) => AppConfigInfo.fromJson(j as Map<String, dynamic>));
+
+  /// Current subscription-gate state for the signed-in user.
+  Future<SubscriptionState> getSubscription() =>
+      _get('/api/v1/subscription/', (j) => SubscriptionState.fromJson(j as Map<String, dynamic>));
+
+  /// Upload proof of payment for this month's subscription → pending review.
+  Future<SubscriptionState> uploadSubscriptionPop(String filePath, String fileName) async {
+    try {
+      final form = FormData.fromMap({
+        'proof_of_payment': await MultipartFile.fromFile(filePath, filename: fileName),
+      });
+      final res = await _d.post('/api/v1/subscription/', data: form);
+      return SubscriptionState.fromJson((res.data as Map).cast<String, dynamic>());
+    } on DioException catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   /// Register this device's FCM token so the backend can push to it.
   Future<void> registerDevice(String token, String platform) async {
     try {

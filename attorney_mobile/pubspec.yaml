@@ -33,6 +33,7 @@ dependencies:
   flutter_markdown: ^0.7.4
   lucide_icons_flutter: ^3.1.14+2
   audioplayers: ^6.7.1
+  package_info_plus: ^8.1.1
 
   # Push notifications (FCM). Inert until the Firebase config files are added
   # (android/app/google-services.json, ios/Runner/GoogleService-Info.plist).

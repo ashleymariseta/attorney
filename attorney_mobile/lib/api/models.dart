@@ -15,6 +15,7 @@ class User {
     this.twoFactorMethod,
     this.avatarUrl,
     this.lawyerCredentialsSubmitted,
+    this.subscription,
   });
 
   final int id;
@@ -31,6 +32,8 @@ class User {
   /// From lawyer_profile.credentials_submitted — false until the lawyer has
   /// submitted a practising certificate. Null for non-lawyers.
   final bool? lawyerCredentialsSubmitted;
+  /// Lawyer monthly-subscription gate state (null / not enforced for others).
+  final SubscriptionState? subscription;
 
   String get fullName {
     final n = '$firstName $lastName'.trim();
@@ -45,6 +48,10 @@ class User {
   /// web gate — so an account with no profile row can't slip past KYC.
   bool get lawyerNeedsVerification =>
       isLawyer && lawyerCredentialsSubmitted != true;
+
+  /// The subscription gate is blocking when enforced and not yet active.
+  bool get subscriptionBlocking =>
+      subscription != null && subscription!.enforced && subscription!.state != 'active';
 
   factory User.fromJson(Map<String, dynamic> j) {
     final lp = j['lawyer_profile'];
@@ -62,8 +69,56 @@ class User {
       avatarUrl: j['avatar_url'] as String?,
       lawyerCredentialsSubmitted:
           lp is Map ? lp['credentials_submitted'] as bool? : null,
+      subscription: j['subscription'] is Map
+          ? SubscriptionState.fromJson((j['subscription'] as Map).cast<String, dynamic>())
+          : null,
     );
   }
+}
+
+/// Lawyer monthly-subscription gate state (mirrors backend status_for()).
+class SubscriptionState {
+  SubscriptionState({
+    required this.enforced,
+    required this.state,
+    this.amount,
+    this.currency,
+    this.reviewNote,
+  });
+  final bool enforced;
+  final String state; // active | required | pending | rejected
+  final String? amount;
+  final String? currency;
+  final String? reviewNote;
+
+  factory SubscriptionState.fromJson(Map<String, dynamic> j) => SubscriptionState(
+        enforced: j['enforced'] as bool? ?? false,
+        state: j['state'] as String? ?? 'active',
+        amount: j['amount'] as String?,
+        currency: j['currency'] as String?,
+        reviewNote: j['review_note'] as String?,
+      );
+}
+
+/// App version/config for update prompts (mirrors /api/v1/app-config/).
+class AppConfigInfo {
+  AppConfigInfo({
+    required this.mobileLatestBuild,
+    required this.mobileMinBuild,
+    required this.iosStoreUrl,
+    required this.androidStoreUrl,
+  });
+  final int mobileLatestBuild;
+  final int mobileMinBuild;
+  final String iosStoreUrl;
+  final String androidStoreUrl;
+
+  factory AppConfigInfo.fromJson(Map<String, dynamic> j) => AppConfigInfo(
+        mobileLatestBuild: (j['mobile_latest_build'] as num?)?.toInt() ?? 1,
+        mobileMinBuild: (j['mobile_min_build'] as num?)?.toInt() ?? 1,
+        iosStoreUrl: j['ios_store_url'] as String? ?? '',
+        androidStoreUrl: j['android_store_url'] as String? ?? '',
+      );
 }
 
 class MiniUser {
