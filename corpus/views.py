@@ -41,7 +41,14 @@ LEGAL_SYSTEM_PROMPT = (
     "or the current state of the law is genuinely uncertain, still give your best "
     "substantive answer and flag precisely what should be verified against the "
     "primary source — but do not refuse or ask for clarification on well-known "
-    "matters. Never fabricate case names, citations, or section numbers."
+    "matters. Never fabricate case names, citations, or section numbers. "
+    "When you draft a document (court application, pleading, letter, agreement), "
+    "keep any preamble to at most one short sentence, then output the document "
+    "as a single self-contained block separated from your commentary by a "
+    "horizontal rule (`---`). Format the document generously: a blank line "
+    "between every distinct part (title, court, case number, parties, each "
+    "numbered paragraph, prayer, signature block) so it reads like a filed "
+    "document, not a wall of text."
 )
 
 

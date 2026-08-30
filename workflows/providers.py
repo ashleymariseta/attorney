@@ -216,6 +216,16 @@ class ClaudeProvider(BaseLLMProvider):
                         u = (evt.get('message', {}) or {}).get('usage', {}) or {}
                         tokens_in = int(u.get('input_tokens', 0) or 0)
                         resolved_model = (evt.get('message', {}) or {}).get('model', resolved_model)
+                    elif etype == 'content_block_start':
+                        # A fresh text block after earlier text (e.g. the model
+                        # resumes writing after a web-search tool call) must be
+                        # separated by a blank line, or the two runs collide
+                        # ("...current practice.Good—I have..."). Only between
+                        # text blocks, and only once we've already emitted text.
+                        block = evt.get('content_block', {}) or {}
+                        if block.get('type') == 'text' and text_parts:
+                            text_parts.append('\n\n')
+                            yield {'type': 'delta', 'text': '\n\n'}
                     elif etype == 'content_block_delta':
                         delta = evt.get('delta', {}) or {}
                         if delta.get('type') == 'text_delta':
