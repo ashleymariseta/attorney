@@ -111,6 +111,7 @@ class UserSerializer(serializers.ModelSerializer):
     lawyer_profile = LawyerProfileSerializer(read_only=True)
     client_profile = ClientProfileSerializer(read_only=True)
     avatar_url = serializers.SerializerMethodField()
+    subscription = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -132,10 +133,11 @@ class UserSerializer(serializers.ModelSerializer):
             'date_joined',
             'lawyer_profile',
             'client_profile',
+            'subscription',
         ]
         read_only_fields = [
             'is_staff', 'is_active', 'is_verified', 'email_verified', 'two_factor_method',
-            'date_joined', 'avatar_url',
+            'date_joined', 'avatar_url', 'subscription',
         ]
         extra_kwargs = {'avatar': {'write_only': True, 'required': False}}
 
@@ -145,6 +147,12 @@ class UserSerializer(serializers.ModelSerializer):
             return None
         url = obj.avatar.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_subscription(self, obj):
+        # The lawyer monthly-subscription gate state (enforced=False for anyone
+        # not gated) so the client can show/hide the blocking gate on login.
+        from .subscriptions import status_for
+        return status_for(obj, self.context.get('request'))
 
 
 class LawyerCardSerializer(serializers.ModelSerializer):

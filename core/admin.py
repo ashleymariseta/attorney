@@ -16,6 +16,10 @@ from .models import (
     Review,
     TimeEntry,
     DeviceToken,
+    AppConfig,
+    SubscriptionSettings,
+    Subscription,
+    SubscriptionStatus,
 )
 
 
@@ -130,3 +134,73 @@ class DeviceTokenAdmin(admin.ModelAdmin):
     list_display = ('user', 'platform', 'is_active', 'last_seen_at', 'created_at')
     list_filter = ('platform', 'is_active')
     search_fields = ('user__email', 'token')
+
+
+@admin.register(AppConfig)
+class AppConfigAdmin(admin.ModelAdmin):
+    list_display = ('web_version', 'mobile_latest_build', 'mobile_min_build', 'updated_at')
+
+    def has_add_permission(self, request):
+        return not AppConfig.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        AppConfig.load()
+        return super().changelist_view(request, extra_context)
+
+
+@admin.register(SubscriptionSettings)
+class SubscriptionSettingsAdmin(admin.ModelAdmin):
+    list_display = ('auto_check', 'monthly_fee', 'currency', 'updated_at')
+
+    def has_add_permission(self, request):
+        return not SubscriptionSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        SubscriptionSettings.load()
+        return super().changelist_view(request, extra_context)
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'period_start', 'amount', 'currency', 'status', 'created_at')
+    list_filter = ('status', 'period_start')
+    search_fields = ('user__email',)
+    actions = ('mark_verified', 'mark_rejected')
+
+    def _review(self, request, queryset, status):
+        from django.utils import timezone
+        from .notify import notify
+        from .models import NotificationKind
+        n = 0
+        for sub in queryset:
+            sub.status = status
+            sub.reviewed_by = request.user
+            sub.reviewed_at = timezone.now()
+            sub.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+            n += 1
+            try:
+                if status == SubscriptionStatus.VERIFIED:
+                    notify(recipient=sub.user, kind=NotificationKind.PAYMENT,
+                           title='Subscription active',
+                           body='Your monthly subscription payment was verified — full access is restored.')
+                else:
+                    notify(recipient=sub.user, kind=NotificationKind.PAYMENT,
+                           title='Subscription payment rejected',
+                           body='Your subscription proof of payment was not accepted. Please re-upload.')
+            except Exception:
+                pass
+        self.message_user(request, f'{n} subscription(s) updated.')
+
+    @admin.action(description='Mark selected subscriptions VERIFIED')
+    def mark_verified(self, request, queryset):
+        self._review(request, queryset, SubscriptionStatus.VERIFIED)
+
+    @admin.action(description='Mark selected subscriptions REJECTED')
+    def mark_rejected(self, request, queryset):
+        self._review(request, queryset, SubscriptionStatus.REJECTED)

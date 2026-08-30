@@ -218,6 +218,14 @@ class LawyerProfile(models.Model):
     # can only put the lawyer on their team once this is set; it seeds each
     # Retainer.monthly_fee and drives the month-end billing job.
     monthly_retainer_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Per-lawyer override for the monthly-subscription gate. `inherit` (default)
+    # follows the global SubscriptionSettings.auto_check; `on` always enforces
+    # for this lawyer; `off` exempts them.
+    subscription_override = models.CharField(
+        max_length=8,
+        choices=[('inherit', 'Inherit global'), ('on', 'Always enforce'), ('off', 'Exempt')],
+        default='inherit',
+    )
     bio = models.TextField(blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
 
@@ -691,3 +699,94 @@ class DeviceToken(models.Model):
 
     def __str__(self):
         return f'DeviceToken({self.user_id}, {self.platform})'
+
+
+class AppConfig(models.Model):
+    """Singleton for client update prompts. Bump the version numbers here on
+    each deploy; clients compare their own build and show an update banner."""
+
+    # Web build number the client compares against its baked-in version.
+    web_version = models.PositiveIntegerField(default=1)
+    # Mobile build numbers (the +N in pubspec version). `min` forces an update.
+    mobile_latest_build = models.PositiveIntegerField(default=1)
+    mobile_min_build = models.PositiveIntegerField(default=1)
+    ios_store_url = models.URLField(blank=True)
+    android_store_url = models.URLField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'App config'
+        verbose_name_plural = 'App config'
+
+    def __str__(self):
+        return 'App config'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class SubscriptionSettings(models.Model):
+    """Singleton controlling the lawyer monthly-subscription gate. ``auto_check``
+    is the global default; each lawyer can override it (see
+    ``LawyerProfile.subscription_override``)."""
+
+    # Global default: True = enforce the monthly subscription gate for lawyers.
+    auto_check = models.BooleanField(default=False)
+    monthly_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    currency = models.CharField(max_length=8, default='USD')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Subscription settings'
+        verbose_name_plural = 'Subscription settings'
+
+    def __str__(self):
+        return 'Subscription settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class SubscriptionStatus(models.TextChoices):
+    PENDING_REVIEW = 'pending_review', 'Pending Review'
+    VERIFIED = 'verified', 'Verified'
+    REJECTED = 'rejected', 'Rejected'
+
+
+class Subscription(models.Model):
+    """A lawyer's monthly platform subscription payment for one billing month.
+    Paid out-of-band (EcoCash/bank) with a proof-of-payment upload an admin
+    verifies — same pattern as invoices."""
+
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='subscriptions')
+    # First day of the billing month this payment covers.
+    period_start = models.DateField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=8, default='USD')
+    status = models.CharField(max_length=16, choices=SubscriptionStatus.choices, default=SubscriptionStatus.PENDING_REVIEW)
+    proof_of_payment = models.FileField(upload_to='subscriptions/', null=True, blank=True, validators=[validate_doc])
+    reference = models.CharField(max_length=120, blank=True)
+    reviewed_by = models.ForeignKey('core.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='subscriptions_reviewed')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-period_start', '-created_at']
+        unique_together = ('user', 'period_start')
+
+    def __str__(self):
+        return f'Subscription({self.user_id}, {self.period_start}, {self.status})'

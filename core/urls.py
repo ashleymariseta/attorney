@@ -39,6 +39,8 @@ from .views import (
     CustomTokenRefreshView,
     LogoutView,
     DeviceTokenView,
+    AppConfigView,
+    SubscriptionView,
 )
 
 router = DefaultRouter()
@@ -87,4 +89,6 @@ urlpatterns = [
     path('auth/token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     path('devices/', DeviceTokenView.as_view(), name='device-token'),
+    path('app-config/', AppConfigView.as_view(), name='app-config'),
+    path('subscription/', SubscriptionView.as_view(), name='subscription'),
 ]

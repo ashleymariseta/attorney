@@ -1726,6 +1726,67 @@ class DeviceTokenView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AppConfigView(APIView):
+    """Public app version/config so clients can prompt for updates."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        from .models import AppConfig
+
+        cfg = AppConfig.load()
+        return Response({
+            'web_version': cfg.web_version,
+            'mobile_latest_build': cfg.mobile_latest_build,
+            'mobile_min_build': cfg.mobile_min_build,
+            'ios_store_url': cfg.ios_store_url,
+            'android_store_url': cfg.android_store_url,
+        })
+
+
+class SubscriptionView(APIView):
+    """Lawyer monthly-subscription gate.
+
+    GET → the caller's current subscription state (for the banner/gate).
+    POST (multipart) → upload proof of payment for this month → pending review.
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        from .subscriptions import status_for
+
+        return Response(status_for(request.user, request))
+
+    def post(self, request):
+        from .models import Subscription, SubscriptionSettings, SubscriptionStatus
+        from .subscriptions import first_of_month, is_enforced_for, status_for
+
+        if not is_enforced_for(request.user):
+            raise ValidationError('No subscription is required for this account.')
+        file = request.FILES.get('proof_of_payment') or request.FILES.get('proof')
+        if not file:
+            raise ValidationError('proof_of_payment file is required.')
+        settings = SubscriptionSettings.load()
+        Subscription.objects.update_or_create(
+            user=request.user,
+            period_start=first_of_month(),
+            defaults={
+                'amount': settings.monthly_fee,
+                'currency': settings.currency,
+                'proof_of_payment': file,
+                'status': SubscriptionStatus.PENDING_REVIEW,
+                'reference': (request.data.get('reference') or '').strip(),
+                'reviewed_by': None,
+                'reviewed_at': None,
+                'review_note': '',
+            },
+        )
+        return Response(status_for(request.user, request))
+
+
 class TwoFactorSetupView(APIView):
     """Begin enabling 2FA — sends a code to the chosen method to confirm reach."""
 
